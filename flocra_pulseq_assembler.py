@@ -9,16 +9,15 @@ import struct
 import io
 
 ROUNDING = 0
-# TODO: Remove instructions parsing
+# TODO: Split up gradients
 
 class PSAssembler:
     """
     Assembler object that can assemble a PulSeq file into OCRA machine code. Run PSAssembler.assemble to compile a .seq file into OCRA machine code
 
     Attributes:
-        tx_bytes (bytes): Transmit data bytes
-        grad_bytes (list): List of grad bytes
-        command_bytes (bytes): Command bytes
+        tx_arr (float): Transmit data bytes
+        grad_arr (float): List of grad bytes
         readout_number (int): Expected number of readouts
     """
 
@@ -96,8 +95,9 @@ class PSAssembler:
         self._grad_durations = {} # us
         self._definitions = {}
 
-        self.tx_arr = np.zeros(0, dtype=np.complex64)
-        self.grad_arr = [np.zeros(0), np.zeros(0), np.zeros(0)] # x, y, z
+        self.tx_arr = np.zeros(0, dtype=np.complex_)
+        self.grad_arr = np.zeros((3, 0)) # x, y, z
+        self.out_arr = np.zeros(0, dtype=np.complex_)
         self.readout_number = 0
         self.is_assembled = False
 
@@ -121,11 +121,12 @@ class PSAssembler:
         self._read_pulseq(pulseq_file)
         self._compile_tx_data()
         self._compile_grad_data()
+        self.out_arr = self._stream_all_blocks()
         self.is_assembled = True
         output_dict = {'readout_number' : self.readout_number, 'tx_t' : self._tx_t, 'rx_t' : self._rx_t}
         for key, value in self._definitions.items():
             output_dict[key] = value
-        return (self.tx_arr, self.grad_arr, output_dict)
+        return (self.out_arr, output_dict)
         
     # Open file and read in all sections into class storage
     def _read_pulseq(self, pulseq_file):
@@ -260,22 +261,8 @@ class PSAssembler:
             self._tx_delays[tx_id] = tx['delay']
             curr_offset += pulse_len
 
-        # Compile as bytes (16 bits for real and imaginary)
-        self._logger.info('Converting to bytes...')
-        tx_arr = np.array(tx_data)
         # Save TX array for external use
-        self.tx_arr = tx_arr
-        temp_bytearray = bytearray(4 * tx_arr.size)
-
-        tx_i = np.round(32767 * tx_arr.real).astype(np.uint16)
-        tx_q = np.round(32767 * tx_arr.imag).astype(np.uint16)
-
-        temp_bytearray[::4] = (tx_i & 0xff).astype(np.uint8).tobytes()
-        temp_bytearray[1::4] = (tx_i >> 8).astype(np.uint8).tobytes()
-        temp_bytearray[2::4] = (tx_q & 0xff).astype(np.uint8).tobytes()
-        temp_bytearray[3::4] = (tx_q >> 8).astype(np.uint8).tobytes()
-
-        self.tx_bytes = bytes(temp_bytearray)
+        self.tx_arr = np.array(tx_data)
         self._logger.info('Tx data compiled')
 
     # Compile grad events into bytes
@@ -331,12 +318,9 @@ class PSAssembler:
             self._grad_durations[grad_ids] = grad_len * self._grad_t
             self._grad_delays[grad_ids] = min_delay
             curr_offset += grad_len
-                
-        # Convert full data array to bytes
-        self._logger.info('Converting to bytes...')
 
         # store floating-point arrays
-        self.grad_arr = [np.array(k) for k in grad_data]
+        self.grad_arr = np.array([np.array(channel) for channel in grad_data])
         self._logger.info('Gradient data compiled')
 
     # Create shapes to convert trapezoids into the same format as gradients, and add a zero shape for when not all of X, Y, Z are on at once. 
@@ -369,104 +353,110 @@ class PSAssembler:
         self._logger.info('Trapezoids processed')
         return
 
-# TODO rewrite to streaming
+    # Encode all blocks
+    def _stream_all_blocks(self):
+        """
+        Encode all blocks into sequential gate changes.
 
-    # # Encode all blocks
-    # def _encode_all_blocks(self):
-    #     """
-    #     Encode all blocks into sequential gate changes.
+        Returns:
+            Aligned lists of durations (us), gates, TX and GRAD offsets for sequential instructions. 
+        """
+        # Encode all blocks
+        out_arrs = []
+        start = 0
+        for block_id in self._blocks.keys():
+            out_arr, duration = self._stream_block(block_id)
+            out_arr[:, 0] += start
+            out_arrs.append(out_arr)
+            start += duration
 
-    #     Returns:
-    #         Aligned lists of durations (us), gates, TX and GRAD offsets for sequential instructions. 
-    #     """
-    #     # Encode all blocks
-    #     PR_durations = []
-    #     PR_gates = []
-    #     TX_offsets = []
-    #     GRAD_offsets = []
-    #     for block_id in self._blocks.keys():
-    #         temp = self._encode_block(block_id)
-    #         PR_durations.extend(temp[0])
-    #         PR_gates.extend(temp[1])
-    #         TX_offsets.extend(temp[2])
-    #         GRAD_offsets.extend(temp[3])
+        # Zero gates at the end
+        ending = np.zeros((1, out_arrs[0].shape[1]))
+        ending[:, 0] += start
+        out_arrs.append(ending)
 
-    #     # Zero gates at the end
-    #     PR_durations.append(1)
-    #     PR_gates.append(np.zeros(1, dtype=np.uint8)[0])
-    #     TX_offsets.append(-1)
-    #     GRAD_offsets.append(-1)
+        return (np.concatenate(out_arrs, axis=0))
 
-    #     return (PR_durations, PR_gates, TX_offsets, GRAD_offsets)
+    # Convert individual block into PR commands (duration, gates), TX offset, and GRAD offset
+    def _stream_block(self, block_id):
+        """
+        Encode block into sequential gate changes to be compiled into byte instructions
 
-    # # Convert individual block into PR commands (duration, gates), TX offset, and GRAD offset
-    # def _encode_block(self, block_id):
-    #     """
-    #     Encode block into sequential gate changes to be compiled into byte instructions
-
-    #     Args:
-    #         block_id (int): Block id key for block in object dict memory to be encoded
+        Args:
+            block_id (int): Block id key for block in object dict memory to be encoded
         
-    #     Returns:
-    #         tuple: PR durations (list) (int); transmit address changes for each PR, -1 if no change (np.ndarray);
-    #             gradient address changes for each time, -1 if no change (np.ndarray)
-    #     """
-    #     block = self._blocks[block_id]
+        Returns:
+            tuple: PR durations (list) (int); transmit address changes for each PR, -1 if no change (np.ndarray);
+                gradient address changes for each time, -1 if no change (np.ndarray)
+        """
+        block = self._blocks[block_id]
         
-    #     # Determine important times in us (when gates change)
-    #     if block['delay'] != 0:
-    #         delay = self._delay_events[block['delay']]
-    #     else:
-    #         delay = 0
-    #     tx_start = tx_end = grad_start = grad_end = rx_start = rx_end = 0
-    #     rf_id = block['rf']
-    #     grad_ids = (block['gx'], block['gy'], block['gz'])
-    #     adc_id = block['adc']
-    #     if rf_id != 0: # rf timing
-    #         tx_start = self._tx_delays[rf_id]
-    #         tx_end = self._tx_durations[rf_id] + tx_start
-    #     if grad_ids != (0, 0, 0): # grad timing
-    #         grad_start = self._grad_delays[grad_ids]
-    #         grad_end = self._grad_durations[grad_ids] + grad_start
-    #     if adc_id:
-    #         adc = self._adc_events[adc_id]
-    #         rx_start = adc['delay']
-    #         rx_end = self._rx_t * adc['num'] + adc['delay']
-    #         self.readout_number += adc['num']
+        # Determine important times in us (when gates change)
+        if block['delay'] != 0:
+            delay = self._delay_events[block['delay']]
+        else:
+            delay = 0
+        tx_start = tx_end = grad_start = grad_end = rx_start = rx_end = 0
+        tx_len = grad_len = rx_len = 0
+        tx_id = block['rf']
+        grad_ids = (block['gx'], block['gy'], block['gz'])
+        adc_id = block['adc']
+        if tx_id != 0: # rf timing
+            tx_start = self._tx_delays[tx_id]
+            tx_end = self._tx_durations[tx_id] + tx_start
+        if grad_ids != (0, 0, 0): # grad timing
+            grad_start = self._grad_delays[grad_ids]
+            grad_end = self._grad_durations[grad_ids] + grad_start
+        if adc_id:
+            adc = self._adc_events[adc_id]
+            rx_start = adc['delay']
+            rx_end = self._rx_t * adc['num'] + adc['delay']
+            self.readout_number += adc['num']
 
-    #     # Remove duplicates and confirm min delay from delay event is met. 
-    #     time_list = list(set([tx_start, tx_end, grad_start, grad_end, rx_start, rx_end, 0]))
-    #     if delay > max(time_list):
-    #         time_list.append(delay)
-    #     times = np.array(time_list)
-    #     times.sort()
+        # Confirm min delay from delay event is met. 
+        duration = max([tx_start, tx_end, grad_start, grad_end, rx_start, rx_end, 0, delay])
 
-    #     # Set gates for each time (leading edge)
-    #     gates = np.zeros(times.size, dtype=np.uint8)
-    #     for i in range(times.size):
-    #         time = times[i]
-    #         if time >= tx_start and time < tx_end:
-    #             gates[i] = gates[i] | self._gate_bits['TX_GATE'] | self._gate_bits['TX_PULSE']
-    #         if time >= grad_start and time < grad_end:
-    #             gates[i] = gates[i] | self._gate_bits['GRAD_PULSE']
-    #         if time >= rx_start and time < rx_end:
-    #             gates[i] = gates[i] | self._gate_bits['RX_PULSE']
+        times_list = []
+        if tx_start < tx_end:
+            tx_len = int((tx_end - tx_start) / self._tx_t)
+            times_list.extend(np.linspace(tx_start, tx_end, num=tx_len, endpoint=False))
+        if grad_start < grad_end:
+            grad_len = int((grad_end - grad_start) / self._grad_t)
+            times_list.extend(np.linspace(grad_start, grad_end, num=grad_len, endpoint=False))
+        if rx_start < rx_end:
+            rx_len = int((rx_end - rx_start) / self._rx_t)
+            times_list.extend(np.linspace(rx_start, rx_end, num=rx_len, endpoint=False))
 
-    #     # Set offsets for each time (leading edge)
-    #     tx_addr = np.zeros(times.size, dtype=np.int) - 1
-    #     grad_addr = np.zeros(times.size, dtype=np.int) - 1
-    #     for i in range(times.size):
-    #         time = times[i]
-    #         if time == tx_start and time != tx_end and rf_id != 0:
-    #             tx_addr[i] = self._tx_offsets[rf_id]
-    #         if time == grad_start and time != grad_end and grad_ids != (0, 0, 0):
-    #             grad_addr[i] = self._grad_offsets[grad_ids]
+        times = np.sort(np.unique(np.asarray(times_list)))
 
-    #     # Convert absolute times to durations
-    #     PR_durations = [times[i] - times[i-1] for i in range(1, times.size)]
+        tx_vals = np.zeros((times.shape[0], 1), dtype=np.complex_)
+        grad_vals = np.zeros((times.shape[0], 3), dtype=np.float_)
+        rx_gate = np.zeros((times.shape[0], 1), dtype=np.bool_)
 
-    #     # Return durations for each PR and leading edge values
-    #     return (PR_durations, gates[:-1], tx_addr[:-1], grad_addr[:-1])
+        tx_change = (times >= tx_start) * (times < tx_end) * \
+            (np.abs(np.round((times - tx_start) / self._tx_t) - (times - tx_start) / self._tx_t) < 1e-13)
+        grad_change = (times >= grad_start) * (times < grad_end) * \
+            (np.abs(np.round((times - grad_start) / self._grad_t) - (times - grad_start) / self._grad_t) < 1e-13)
+        rx_change = (times >= rx_start) * (times < rx_end) * ((times - rx_start) % self._rx_t == 0)
+
+        if tx_id != 0:
+            tx_vals[tx_change] = self.tx_arr[self._tx_offsets[tx_id]:self._tx_offsets[tx_id] + tx_len].reshape(-1, 1)
+        if grad_ids != (0, 0, 0):
+            grad_vals[grad_change, :] = self.grad_arr[:, self._grad_offsets[grad_ids]:self._grad_offsets[grad_ids] + grad_len].T
+        rx_gate[rx_change] = 1
+
+        for ind in range(1, times.shape[0]):
+            if not tx_change[ind]:
+                tx_vals[ind] = tx_vals[ind - 1]
+            if not grad_change[ind]:
+                grad_vals[ind, :] = grad_vals[ind - 1, :]
+            if not rx_change[ind]:
+                rx_gate[ind] = rx_gate[ind - 1]
+
+        out_arr = np.concatenate((times.reshape(-1, 1), tx_vals, grad_vals, rx_gate), axis=1)
+
+        # Return durations for each PR and leading edge values
+        return (out_arr, duration)
     #endregion
 
     # Helper functions for reading sections
@@ -834,6 +824,7 @@ class PSAssembler:
 # Sample usage
 if __name__ == '__main__':
     ps = PSAssembler()
-    inp_file = 'test_files/tabletop_se_2d_pulseq.seq'
-    tx_data, grad_data_list, params = ps.assemble(inp_file)
+    inp_file = '../ocra-pulseq/test_files/test_loopback.seq'
+    out_arr, params = ps.assemble(inp_file)
+    print(out_arr[:, 0])
     print("Completed successfully")
