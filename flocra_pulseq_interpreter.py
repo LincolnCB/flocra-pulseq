@@ -11,13 +11,15 @@ import io
 ROUNDING = 0
 # TODO: Split up gradients
 
-class PSAssembler:
+class PSInterpreter:
     """
-    Assembler object that can assemble a PulSeq file into OCRA machine code. Run PSAssembler.assemble to compile a .seq file into OCRA machine code
+    Interpret object that can compile a PulSeq file into a FLOCRA update stream array. 
+    Run PSInterpreter.compile to compile a .seq file into a [updates]x[variables]
 
     Attributes:
-        tx_arr (float): Transmit data bytes
-        grad_arr (float): List of grad bytes
+        tx_arr (complex): Transmit data
+        grad_arr (float): Gradient data
+        out_arr (complex): Output sequence data
         readout_number (int): Expected number of readouts
     """
 
@@ -25,7 +27,7 @@ class PSAssembler:
                  clk_t=7e-3, tx_t=1.001, grad_t=10.003,
                  pulseq_t_match=False, ps_tx_t=1, ps_grad_t=10):
         """
-        Create PSAssembler object with system parameters.
+        Create PSInterpreter object for FLOCRA with system parameters.
 
         Args:
             rf_center (int): RF center (local oscillator frequency) in Hz.
@@ -34,7 +36,7 @@ class PSAssembler:
             clk_t (float): Default 7e-3 -- System clock period in us.
             tx_t (float): Default 1.001 -- Transmit raster period in us.
             grad_t (float): Default 10.003 -- Gradient raster period in us.
-            pulseq_t_match (bool): Default False -- If PulSeq file transmit and gradient raster times match OCRA transmit and raster times.
+            pulseq_t_match (bool): Default False -- If PulSeq file transmit and gradient raster times match FLOCRA transmit and raster times.
             ps_tx_t (float): Default 1 -- PulSeq transmit raster period in us. Used only if pulseq_t_match is False.
             ps_grad_t (float): Default 10 -- PulSeq gradient raster period in us. Used only if pulseq_t_match is False.
         """
@@ -98,32 +100,34 @@ class PSAssembler:
         self.tx_arr = np.zeros(0, dtype=np.complex_)
         self.grad_arr = np.zeros((3, 0)) # x, y, z
         self.out_arr = np.zeros(0, dtype=np.complex_)
+        self.out_arr_labels = ['time', 'tx', 'gx', 'gy', 'gz', 'rx_gate']
         self.readout_number = 0
         self.is_assembled = False
 
-    # Wrapper for full assembly
-    def assemble(self, pulseq_file, byte_format=True):
+    # Wrapper for full compilation
+    def compile(self, pulseq_file):
         """
-        Assemble OCRA machine code from PulSeq .seq file
+        Compile FLOCRA array from PulSeq .seq file
 
         Args:
-            pulseq_file (str): PulSeq file to assemble from
-            byte_format (bool): Default True -- Return transmit and gradient data in bytes, rather than numpy.ndarray
+            pulseq_file (str): PulSeq file to compile from
         
         Returns:
-            tuple: Transmit data (bytes or numpy.ndarray); list of gradient data (list) (bytes or numpy.ndarray);
-                 command bytes (bytes); dictionary of final outputs (dict)
+            tuple: Output update array [updates]x[variables] [time, tx, gx, gy, gz, rx_gate]; dictionary of final outputs (dict)
         """
-        self._logger.info(f'Assembling ' + pulseq_file)
+        self._logger.info(f'Interpreting ' + pulseq_file)
         if self.is_assembled:
-            self._logger.info('Overwriting old sequence...')
-        
+            self._logger.info('Re-initializing over old sequence...')
+            self.__init__(rf_center=self._rf_center, rf_amp_max=self._rf_amp_max, grad_max=self._grad_max,
+                clk_t=self._clk_t, tx_t=self._tx_t, grad_t=self._grad_t,
+                ps_tx_t=self._ps_tx_t, ps_grad_t=self._ps_grad_t)
         self._read_pulseq(pulseq_file)
         self._compile_tx_data()
         self._compile_grad_data()
         self.out_arr = self._stream_all_blocks()
         self.is_assembled = True
-        output_dict = {'readout_number' : self.readout_number, 'tx_t' : self._tx_t, 'rx_t' : self._rx_t}
+        output_dict = {'readout_number' : self.readout_number, 'tx_t' : self._tx_t, 'rx_t' : self._rx_t,
+            'output_labels': self.out_arr_labels}
         for key, value in self._definitions.items():
             output_dict[key] = value
         return (self.out_arr, output_dict)
@@ -218,9 +222,10 @@ class PSAssembler:
     #region
 
     # Compile tx events into bytes
+    #TODO simplify into list? Test speed
     def _compile_tx_data(self):
         """
-        Compile transmit data from object dict memory into bytes
+        Compile transmit data from object dict memory into concatenated array
         """
 
         self._logger.info('Compiling Tx data...')
@@ -261,14 +266,15 @@ class PSAssembler:
             self._tx_delays[tx_id] = tx['delay']
             curr_offset += pulse_len
 
-        # Save TX array for external use
+        # Save TX array for external and internal use
         self.tx_arr = np.array(tx_data)
         self._logger.info('Tx data compiled')
 
     # Compile grad events into bytes
+    #TODO simplify into list? Separate gradients
     def _compile_grad_data(self):
         """
-        Compile gradient events from object dict memory into bytes
+        Compile gradient events from object dict memory into array
         """
         # Prep grad data
         self._create_helper_shapes()
@@ -356,10 +362,10 @@ class PSAssembler:
     # Encode all blocks
     def _stream_all_blocks(self):
         """
-        Encode all blocks into sequential gate changes.
+        Encode all blocks into sequential time updates.
 
         Returns:
-            Aligned lists of durations (us), gates, TX and GRAD offsets for sequential instructions. 
+            np.ndarray: [updates]x[variables] [time, tx, gx, gy, gz, rx_gate] of all blocks
         """
         # Encode all blocks
         out_arrs = []
@@ -380,14 +386,14 @@ class PSAssembler:
     # Convert individual block into PR commands (duration, gates), TX offset, and GRAD offset
     def _stream_block(self, block_id):
         """
-        Encode block into sequential gate changes to be compiled into byte instructions
+        Encode block into sequential time updates
 
         Args:
             block_id (int): Block id key for block in object dict memory to be encoded
         
         Returns:
-            tuple: PR durations (list) (int); transmit address changes for each PR, -1 if no change (np.ndarray);
-                gradient address changes for each time, -1 if no change (np.ndarray)
+            np.ndarray: [updates]x[variables] [time, tx, gx, gy, gz, rx_gate] of one block
+            float: duration of the block, for concatenating blocks
         """
         block = self._blocks[block_id]
         
@@ -416,6 +422,7 @@ class PSAssembler:
         # Confirm min delay from delay event is met. 
         duration = max([tx_start, tx_end, grad_start, grad_end, rx_start, rx_end, 0, delay])
 
+        # Collect all times for updates
         times_list = []
         if tx_start < tx_end:
             tx_len = int((tx_end - tx_start) / self._tx_t)
@@ -433,18 +440,21 @@ class PSAssembler:
         grad_vals = np.zeros((times.shape[0], 3), dtype=np.float_)
         rx_gate = np.zeros((times.shape[0], 1), dtype=np.bool_)
 
+        # Find times where the tx gate changes
         tx_change = (times >= tx_start) * (times < tx_end) * \
             (np.abs(np.round((times - tx_start) / self._tx_t) - (times - tx_start) / self._tx_t) < 1e-13)
         grad_change = (times >= grad_start) * (times < grad_end) * \
             (np.abs(np.round((times - grad_start) / self._grad_t) - (times - grad_start) / self._grad_t) < 1e-13)
         rx_change = (times >= rx_start) * (times < rx_end) * ((times - rx_start) % self._rx_t == 0)
 
+        # Set update values at these times
         if tx_id != 0:
             tx_vals[tx_change] = self.tx_arr[self._tx_offsets[tx_id]:self._tx_offsets[tx_id] + tx_len].reshape(-1, 1)
         if grad_ids != (0, 0, 0):
             grad_vals[grad_change, :] = self.grad_arr[:, self._grad_offsets[grad_ids]:self._grad_offsets[grad_ids] + grad_len].T
         rx_gate[rx_change] = 1
 
+        # Propogate variable updates over intermediate times
         for ind in range(1, times.shape[0]):
             if not tx_change[ind]:
                 tx_vals[ind] = tx_vals[ind - 1]
@@ -823,8 +833,8 @@ class PSAssembler:
 
 # Sample usage
 if __name__ == '__main__':
-    ps = PSAssembler()
+    ps = PSInterpreter()
     inp_file = '../ocra-pulseq/test_files/test_loopback.seq'
-    out_arr, params = ps.assemble(inp_file)
+    out_arr, params = ps.compile(inp_file)
     print(out_arr[:, 0])
     print("Completed successfully")
