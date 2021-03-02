@@ -1,8 +1,8 @@
 # flocra-pulseq
-Pulseq interpreter for vnegnev's flow-based OCRA
+Pulseq interpreter for vnegnev's flow-based OCRA (FLOCRA)
 
 # Usage:
-Create interpreter with PSInterpreter. Run PSInterpreter.compile to get output array and dictionary
+Create interpreter with PSInterpreter. Run PSInterpreter.interpret to get output array and dictionary
 
 # Arguments
 rf_center (int): RF center (local oscillator frequency) in Hz.
@@ -24,7 +24,7 @@ ps_tx_t (float): Default 1 -- PulSeq transmit raster period in us. Used only if 
 ps_grad_t (float): Default 10 -- PulSeq gradient raster period in us. Used only if pulseq_t_match is False.
 
 # Outputs
-Complex (updates)x(variables) array (time, tx, gx, gy, gz, rx_gate) of sequence
+dict: tuple of numpy.ndarray time and update arrays, with variable name keys
 
-Dictionary of variables used in interpreter or passed through pulseq file. Check 'output_labels' for variable ordering of sequence array
+dict: parameter dictionary containing raster times, readout numbers, and any file-defined variables
 

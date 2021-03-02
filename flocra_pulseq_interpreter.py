@@ -17,9 +17,7 @@ class PSInterpreter:
     Run PSInterpreter.compile to compile a .seq file into a [updates]x[variables]
 
     Attributes:
-        tx_arr (complex): Transmit data
-        grad_arr (float): Gradient data
-        out_arr (complex): Output sequence data
+        out_dict (complex): Output sequence data
         readout_number (int): Expected number of readouts
     """
 
@@ -44,28 +42,6 @@ class PSInterpreter:
         self._logger = logging.getLogger()
         logging.basicConfig(filename = 'psassembler.log', filemode = 'w', level = logging.DEBUG)
 
-        # PulSeq dictionary storage
-        self._blocks = {}
-        self._rf_events = {}
-        self._grad_events = {}
-        self._adc_events = {}
-        self._delay_events = {}
-        self._shapes = {}
-
-        # Interpreter for section names in .seq file
-        self._pulseq_keys = {
-            '[VERSION]' : self._read_temp, # Unused
-            '[DEFINITIONS]' : self._read_defs,
-            '[BLOCKS]' : self._read_blocks,
-            '[RF]' : self._read_rf_events,
-            '[GRADIENTS]' : self._read_grad_events,
-            '[TRAP]' : self._read_trap_events,
-            '[ADC]' : self._read_adc_events,
-            '[DELAYS]' : self._read_delay_events,
-            '[EXTENSIONS]' : self._read_temp, # Unused
-            '[SHAPES]' : self._read_shapes
-        }
-
         self._clk_t = clk_t # Instruction clock period in us
         self._tx_div = int(tx_t / self._clk_t + ROUNDING) # Clock cycles per tx
         self._tx_t = tx_t # Transmit sample period in us
@@ -89,31 +65,53 @@ class PSInterpreter:
         self._rf_amp_max = rf_amp_max # Hz
         self._grad_max = grad_max # Hz/m
 
-        self._tx_offsets = {} # Tx word index (32-bit) by Tx ID
-        self._tx_delays = {} # us
-        self._tx_durations = {} # us
-        self._grad_offsets = {} # Gradient word index (3 concurrent 32-bit) by Gx, Gy, Gz ID combo
-        self._grad_delays = {} # us
-        self._grad_durations = {} # us
-        self._definitions = {}
+        # Interpreter for section names in .seq file
+        self._pulseq_keys = {
+            '[VERSION]' : self._read_temp, # Unused
+            '[DEFINITIONS]' : self._read_defs,
+            '[BLOCKS]' : self._read_blocks,
+            '[RF]' : self._read_rf_events,
+            '[GRADIENTS]' : self._read_grad_events,
+            '[TRAP]' : self._read_trap_events,
+            '[ADC]' : self._read_adc_events,
+            '[DELAYS]' : self._read_delay_events,
+            '[EXTENSIONS]' : self._read_temp, # Unused
+            '[SHAPES]' : self._read_shapes
+        }
 
-        self.tx_arr = np.zeros(0, dtype=np.complex_)
-        self.grad_arr = np.zeros((3, 0)) # x, y, z
-        self.out_arr = np.zeros(0, dtype=np.complex_)
-        self.out_arr_labels = ['time', 'tx', 'gx', 'gy', 'gz', 'rx_gate']
+        # Defined variable names to output
+        self._var_names = ('tx', 'gx', 'gy', 'gz', 'adc_gate')
+
+        # PulSeq dictionary storage
+        self._blocks = {}
+        self._rf_events = {}
+        self._grad_events = {}
+        self._adc_events = {}
+        self._delay_events = {}
+        self._shapes = {}
+        self._definitions = {}    
+
+        # Interpolated and compiled data for output
+        self._tx_data = {}
+        self._grad_data = {}
+        self._tx_delays = {} # us
+        self._grad_delays = {} # us
+
+        self.out_data = {}
         self.readout_number = 0
         self.is_assembled = False
 
     # Wrapper for full compilation
-    def compile(self, pulseq_file):
+    def interpret(self, pulseq_file):
         """
-        Compile FLOCRA array from PulSeq .seq file
+        Interpret FLOCRA array from PulSeq .seq file
 
         Args:
             pulseq_file (str): PulSeq file to compile from
         
         Returns:
-            tuple: Output update array [updates]x[variables] [time, tx, gx, gy, gz, rx_gate]; dictionary of final outputs (dict)
+            dict: tuple of numpy.ndarray time and update arrays, with variable name keys
+            dict: parameter dictionary containing raster times, readout numbers, and any file-defined variables
         """
         self._logger.info(f'Interpreting ' + pulseq_file)
         if self.is_assembled:
@@ -124,13 +122,13 @@ class PSInterpreter:
         self._read_pulseq(pulseq_file)
         self._compile_tx_data()
         self._compile_grad_data()
-        self.out_arr = self._stream_all_blocks()
+        self.out_data, self.readout_number = self._stream_all_blocks()
         self.is_assembled = True
-        output_dict = {'readout_number' : self.readout_number, 'tx_t' : self._tx_t, 'rx_t' : self._rx_t,
-            'output_labels': self.out_arr_labels}
+        param_dict = {'readout_number' : self.readout_number, 'tx_t' : self._tx_t, 'rx_t' : self._rx_t, 'grad_t': self._grad_t}
         for key, value in self._definitions.items():
-            output_dict[key] = value
-        return (self.out_arr, output_dict)
+            self._warning_if(key in param_dict, f'Key conflict: overwriting key [{key}] with value [{param_dict[key]}]')
+            param_dict[key] = value
+        return (self.out_data, param_dict)
         
     # Open file and read in all sections into class storage
     def _read_pulseq(self, pulseq_file):
@@ -178,10 +176,10 @@ class PSInterpreter:
                         self._adc_events.values()]:
             for event in events:
                 self._warning_if(int(event['delay'] / self._clk_t + ROUNDING) * self._clk_t != event['delay'],
-                    f'Delay is not a multiple of clk_t, rounding')
+                    f'Event delay {event["delay"]} is not a multiple of clk_t, rounding')
         for delay in self._delay_events.values():
             self._warning_if(int(delay / self._clk_t + ROUNDING) * self._clk_t != delay,
-                f'Delay is not a multiple of clk_t, rounding')
+                f'Delay event {delay} is not a multiple of clk_t, rounding')
         
         # Check that RF/ADC (TX/RX) only have one frequency offset -- can't be set within one file.
         freq = None
@@ -221,143 +219,85 @@ class PSInterpreter:
     # Compilation into data formats
     #region
 
-    # Compile tx events into bytes
-    #TODO simplify into list? Test speed
+    # Interpolate and compile tx events
     def _compile_tx_data(self):
         """
         Compile transmit data from object dict memory into concatenated array
         """
 
         self._logger.info('Compiling Tx data...')
-        tx_data = []
-        curr_offset = 0
 
         # Process each rf event
-        for tx_id, tx in self._rf_events.items():
+        for tx_id, tx_event in self._rf_events.items():
             # Collect mag/phase shapes
-            mag_shape = self._shapes[tx['mag_id']]
-            phase_shape = self._shapes[tx['phase_id']]
-            if len(mag_shape) != len(phase_shape):
-                self._logger.warning(f'Tx envelope of RF event {tx_id} has mismatched magnitude and phase information,'
-                                    ' the last entry of the shorter will be extended')
+            mag_shape = self._shapes[tx_event['mag_id']]
+            phase_shape = self._shapes[tx_event['phase_id']]
+            self._warning_if(len(mag_shape) != len(phase_shape), f'Tx envelope of RF event {tx_id} has mismatched magnitude ' \
+                'and phase information, the last entry of the shorter will be extended')
 
-            # Array length, unitless -- extends shorter of phase/mag shape to length of longer                     
-            pulse_len = int((max(len(mag_shape), len(phase_shape)) - 1) * self._ps_tx_t / self._tx_t) + 1 # unitless
+            # Event duration and interpolated length -- extends shorter of phase/mag shape to length of longer   
+            pulse_duration = max(len(mag_shape), len(phase_shape)) * self._ps_tx_t # us          
+            pulse_len = int(max(len(mag_shape), len(phase_shape)) * (self._ps_tx_t / self._tx_t)) # unitless
+            self._error_if(pulse_len < 1, f'RF event {tx_id} duration {pulse_duration} is too short for a tx_t of {self._tx_t}')
             
             # Interpolate values on falling edge (and extend past end of shorter, if needed)
             x = np.flip(np.linspace(pulse_len * self._tx_t, 0, num=pulse_len, endpoint=False)) # us
             mag_x_ps = np.flip(np.linspace(len(mag_shape)* self._ps_tx_t, 0, num=len(mag_shape), endpoint=False))
             phase_x_ps = np.flip(np.linspace(len(phase_shape)* self._ps_tx_t, 0, num=len(phase_shape), endpoint=False))
-            mag_interp = np.interp(x, mag_x_ps, mag_shape) * tx['amp'] / self._rf_amp_max
+            mag_interp = np.interp(x, mag_x_ps, mag_shape) * tx_event['amp'] / self._rf_amp_max
             phase_interp = np.interp(x, phase_x_ps, phase_shape) * 2 * np.pi
 
-            tx_env = np.zeros(pulse_len, dtype=np.complex64)
-
             # Convert to complex tx envelope
-            tx_env = np.exp((phase_interp + tx['phase']) * 1j) * mag_interp
+            tx_env = np.exp((phase_interp + tx_event['phase']) * 1j) * mag_interp
             
-            if np.any(np.abs(tx_env) > 1.0):
-                self._logger.warning(f'Magnitude of RF event {tx_id} was too large, 16-bit signed overflow will occur')
+            self._error_if(np.any(np.abs(tx_env) > 1.0), f'Magnitude of RF event {tx_id} is too ' \
+                f'large relative to RF max {self._rf_amp_max}')
             
-            # Concatenate tx data and track offsets
-            tx_data.extend(tx_env.tolist())
-            self._tx_offsets[tx_id] = curr_offset
-            self._tx_durations[tx_id] = pulse_len * self._tx_t
-            self._tx_delays[tx_id] = tx['delay']
-            curr_offset += pulse_len
+            # Save tx data, delay, and duration
+            self._tx_delays[tx_id] = tx_event['delay']
+            self._tx_data[tx_id] = tx_env
 
-        # Save TX array for external and internal use
-        self.tx_arr = np.array(tx_data)
         self._logger.info('Tx data compiled')
 
-    # Compile grad events into bytes
-    #TODO simplify into list? Separate gradients
+    # Interpolate and compile gradient events
     def _compile_grad_data(self):
         """
         Compile gradient events from object dict memory into array
         """
-        # Prep grad data
-        self._create_helper_shapes()
-
         self._logger.info('Compiling gradient data...')
-        grad_data = [[], [], []]
-        curr_offset = 0
 
-        # Process each block (all gradients play out at once, so different xyz combinations are distinct)
-        for block in self._blocks.values():
-            grad_ids = (block['gx'], block['gy'], block['gz'])
+        # Process each rf event
+        for grad_id, grad_event in self._grad_events.items():
 
-            # Skip if all off or a repeat combination
-            if grad_ids[0] == 0 and grad_ids[1] == 0 and grad_ids[2] == 0: continue
-            if (grad_ids) in self._grad_offsets: continue
-
-            # Collect grad events and shapes
-            grads = [self._grad_events[grad_ids[i]] for i in range(3)]
-            grad_shapes = [self._shapes[grads[i]['shape_id']] for i in range(3)]
-
-            # Remove time when all are off
-            grad_delays = [grad['delay'] for grad in grads]
-            min_delay = min(grad_delays)
-            grad_delay_lens = [int((delay - min_delay) / self._ps_grad_t + ROUNDING) if delay != np.inf else 0 for delay in grad_delays]
-
-            # Array lengths (unitless)
-            grad_ps_len = max([len(grad_shapes[i]) + grad_delay_lens[i] for i in range(3)])
-            grad_len = int(grad_ps_len * self._ps_grad_t / self._grad_t + ROUNDING)
-
-            # Falling edge time arrays for interpolation
-            duration = grad_ps_len * self._ps_grad_t
-            x_ps = np.flip(np.linspace(duration + self._ps_grad_t, 0, num=grad_ps_len + 2)) # Add a zero on either end
-            x = np.flip(np.linspace(duration, 0, num=grad_len, endpoint=False))
+            # Collect shapes
+            if len(grad_event) == 5:
+                # Simple trapezoid shape
+                shape = np.array([0, grad_event['amp'], grad_event['amp'], 0])
+                event_duration = grad_event['rise'] + grad_event['flat'] + grad_event['fall'] # us
+                event_len = int(event_duration / self._grad_t) # unitless
+            else:
+                shape = self._shapes[grad_event['shape_id']]
+                # Event duration and interpolated length -- extends shorter of phase/mag shape to length of longer   
+                event_duration = len(shape) * self._ps_grad_t # us          
+                event_len = int(len(shape) * (self._ps_grad_t / self._grad_t)) # unitless
+            self._error_if(event_len < 1, f'Gradient event {grad_id} duration {event_duration} is too short for a grad_t of {self._grad_t}')
             
-            # Interpolate, scale, and concatenate grad data
-            for i in range(3):
-                grad_ps = np.zeros(grad_ps_len + 2)
-                grad_ps[grad_delay_lens[i] + 1 : grad_delay_lens[i] + len(grad_shapes[i]) + 1] = np.array(grad_shapes[i])
-                gr = np.interp(x, x_ps, grads[i]['amp'] * grad_ps) / self._grad_max
-
-                grad_data[i].extend(gr.tolist())
-                if np.any(np.abs(gr) > 1.0):
-                    self._logger.warning(f'Magnitude of gradient event {grad_ids[i]} was too large, 16-bit signed overflow will occur')
-
-            # Track offsets for concatenated grad events
-            self._grad_offsets[grad_ids] = curr_offset
-            self._grad_durations[grad_ids] = grad_len * self._grad_t
-            self._grad_delays[grad_ids] = min_delay
-            curr_offset += grad_len
-
-        # store floating-point arrays
-        self.grad_arr = np.array([np.array(channel) for channel in grad_data])
+            # Interpolate values on falling edge
+            x = np.flip(np.linspace(event_len * self._grad_t, 0, num=event_len, endpoint=False)) # us
+            if len(grad_event) == 5:
+                x_ps = np.array([0, grad_event['rise'], grad_event['rise'] + grad_event['flat'], event_duration])
+            else:    
+                x_ps = np.flip(np.linspace(event_duration, 0, num=len(shape), endpoint=False))
+            grad_interp = np.interp(x, x_ps, shape) * grad_event['amp'] / self._grad_max
+            
+            self._error_if(np.any(np.abs(grad_interp) > 1.0), f'Magnitude of gradient event {grad_id} is too ' \
+                f'large relative to gradient max {self._grad_max}')
+            
+            # Save tx data, delay, and duration
+            self._grad_delays[grad_id] = grad_event['delay']
+            self._grad_data[grad_id] = grad_interp
+    
         self._logger.info('Gradient data compiled')
-
-    # Create shapes to convert trapezoids into the same format as gradients, and add a zero shape for when not all of X, Y, Z are on at once. 
-    def _create_helper_shapes(self):
-        """
-        Creates rastered shapes for trapezoid events for encoding into gradient bytes, and creates a zero shape for when not all of X, Y, Z are on at once.
-        """
-        self._logger.info('Processing trapezoids...')
-        # Append helper shapes on top of existing shapes
-        max_id = 0
-        for shape_id in self._shapes:
-            if shape_id > max_id: max_id = shape_id
-
-        # Append zero shape first
-        max_id += 1
-        self._grad_events[0] = {'amp': 0, 'shape_id': max_id, 'delay': np.inf}
-        self._shapes[max_id] = np.zeros(0)
-        
-        # Create and append new trap shapes, and convert trap into standard grad events
-        for grad_id, grad in self._grad_events.items():
-            if len(grad) == 5:
-                rise = np.flip(np.linspace(1, 0, num=int(grad['rise'] / self._ps_grad_t + ROUNDING), endpoint=False))
-                flat = np.ones(int(grad['flat'] / self._ps_grad_t + ROUNDING))
-                fall = np.flip(np.linspace(0, 1, num=int(grad['fall'] / self._ps_grad_t + ROUNDING), endpoint=False))
-                shape = np.concatenate((rise, flat, fall))
-                
-                max_id += 1
-                self._shapes[max_id] = shape
-                self._grad_events[grad_id] = {'amp': grad['amp'], 'shape_id': max_id, 'delay': grad['delay']}
-        self._logger.info('Trapezoids processed')
-        return
 
     # Encode all blocks
     def _stream_all_blocks(self):
@@ -365,23 +305,37 @@ class PSInterpreter:
         Encode all blocks into sequential time updates.
 
         Returns:
-            np.ndarray: [updates]x[variables] [time, tx, gx, gy, gz, rx_gate] of all blocks
+            dict: tuples of np.ndarray times, updates with variable name keys
+            int: number of sequence readout points
         """
-        # Encode all blocks
-        out_arrs = []
+        # Prep containers
+        times = {var: [] for var in self._var_names}
+        updates = {var: [] for var in self._var_names}
         start = 0
+        readout_total = 0
+
+        # Encode all blocks
         for block_id in self._blocks.keys():
-            out_arr, duration = self._stream_block(block_id)
-            out_arr[:, 0] += start
-            out_arrs.append(out_arr)
+            var_dict, duration, readout_num = self._stream_block(block_id)
+            for var in self._var_names:
+                times[var].append(var_dict[var][0] + start)
+                updates[var].append(var_dict[var][1])
             start += duration
+            readout_total += readout_num
 
         # Zero gates at the end
-        ending = np.zeros((1, out_arrs[0].shape[1]))
-        ending[:, 0] += start
-        out_arrs.append(ending)
+        for var in self._var_names:
+            times[var].append(np.zeros(1) + start)
+            updates[var].append(np.zeros(1))
 
-        return (np.concatenate(out_arrs, axis=0))
+        out_data = {var: (np.concatenate(times[var]), np.concatenate(updates[var])) 
+                for var in self._var_names}
+
+
+        # TODO zero between blocks (smart)
+        # TODO tx_gate for warm-up
+
+        return (out_data, readout_total)
 
     # Convert individual block into PR commands (duration, gates), TX offset, and GRAD offset
     def _stream_block(self, block_id):
@@ -392,81 +346,58 @@ class PSInterpreter:
             block_id (int): Block id key for block in object dict memory to be encoded
         
         Returns:
-            np.ndarray: [updates]x[variables] [time, tx, gx, gy, gz, rx_gate] of one block
-            float: duration of the block, for concatenating blocks
+            dict: tuples of np.ndarray times, updates with variable name keys
+            float: duration of the block
+            int: readout count for the block
         """
+        out_dict = {}
+        readout_num = 0
+        duration = 0
+
         block = self._blocks[block_id]
-        
-        # Determine important times in us (when gates change)
+        # Preset all variables
+        for var in self._var_names:
+             out_dict[var] = (np.zeros(0, dtype=int),) * 2
+
+        # Minimum duration of block
         if block['delay'] != 0:
-            delay = self._delay_events[block['delay']]
-        else:
-            delay = 0
-        tx_start = tx_end = grad_start = grad_end = rx_start = rx_end = 0
-        tx_len = grad_len = rx_len = 0
+            duration = max(duration, self._delay_events[block['delay']])
+
+        # Tx updates
         tx_id = block['rf']
-        grad_ids = (block['gx'], block['gy'], block['gz'])
-        adc_id = block['adc']
-        if tx_id != 0: # rf timing
-            tx_start = self._tx_delays[tx_id]
-            tx_end = self._tx_durations[tx_id] + tx_start
-        if grad_ids != (0, 0, 0): # grad timing
-            grad_start = self._grad_delays[grad_ids]
-            grad_end = self._grad_durations[grad_ids] + grad_start
-        if adc_id:
-            adc = self._adc_events[adc_id]
-            rx_start = adc['delay']
-            rx_end = self._rx_t * adc['num'] + adc['delay']
-            self.readout_number += adc['num']
-
-        # Confirm min delay from delay event is met. 
-        duration = max([tx_start, tx_end, grad_start, grad_end, rx_start, rx_end, 0, delay])
-
-        # Collect all times for updates
-        times_list = []
-        if tx_start < tx_end:
-            tx_len = int((tx_end - tx_start) / self._tx_t)
-            times_list.extend(np.linspace(tx_start, tx_end, num=tx_len, endpoint=False))
-        if grad_start < grad_end:
-            grad_len = int((grad_end - grad_start) / self._grad_t)
-            times_list.extend(np.linspace(grad_start, grad_end, num=grad_len, endpoint=False))
-        if rx_start < rx_end:
-            rx_len = int((rx_end - rx_start) / self._rx_t)
-            times_list.extend(np.linspace(rx_start, rx_end, num=rx_len, endpoint=False))
-
-        times = np.sort(np.unique(np.asarray(times_list)))
-
-        tx_vals = np.zeros((times.shape[0], 1), dtype=np.complex_)
-        grad_vals = np.zeros((times.shape[0], 3), dtype=np.float_)
-        rx_gate = np.zeros((times.shape[0], 1), dtype=np.bool_)
-
-        # Find times where the tx gate changes
-        tx_change = (times >= tx_start) * (times < tx_end) * \
-            (np.abs(np.round((times - tx_start) / self._tx_t) - (times - tx_start) / self._tx_t) < 1e-13)
-        grad_change = (times >= grad_start) * (times < grad_end) * \
-            (np.abs(np.round((times - grad_start) / self._grad_t) - (times - grad_start) / self._grad_t) < 1e-13)
-        rx_change = (times >= rx_start) * (times < rx_end) * ((times - rx_start) % self._rx_t == 0)
-
-        # Set update values at these times
         if tx_id != 0:
-            tx_vals[tx_change] = self.tx_arr[self._tx_offsets[tx_id]:self._tx_offsets[tx_id] + tx_len].reshape(-1, 1)
-        if grad_ids != (0, 0, 0):
-            grad_vals[grad_change, :] = self.grad_arr[:, self._grad_offsets[grad_ids]:self._grad_offsets[grad_ids] + grad_len].T
-        rx_gate[rx_change] = 1
+            tx_updates = self._tx_data[tx_id]
+            tx_start = self._tx_delays[tx_id]
+            tx_len = len(tx_updates)
+            tx_end = tx_start + tx_len * self._tx_t
+            tx_times = np.linspace(tx_start, tx_end, num=tx_len, endpoint=False) # us
+            out_dict['tx'] = (tx_times, tx_updates)
+            duration = max(duration, tx_end)
+           
+        # Gradient updates
+        for grad_ch in ('gx', 'gy', 'gz'):
+            grad_id = block[grad_ch]
+            if tx_id != 0:
+                grad_updates = self._grad_data[grad_id]
+                grad_start = self._grad_delays[grad_id]
+                grad_len = len(grad_updates)
+                grad_end = grad_start + grad_len * self._grad_t
+                grad_times = np.linspace(grad_start, grad_end, num=grad_len, endpoint=False) # us
+                out_dict[grad_ch] = (grad_times, grad_updates)
+                duration = max(duration, grad_end)
 
-        # Propogate variable updates over intermediate times
-        for ind in range(1, times.shape[0]):
-            if not tx_change[ind]:
-                tx_vals[ind] = tx_vals[ind - 1]
-            if not grad_change[ind]:
-                grad_vals[ind, :] = grad_vals[ind - 1, :]
-            if not rx_change[ind]:
-                rx_gate[ind] = rx_gate[ind - 1]
-
-        out_arr = np.concatenate((times.reshape(-1, 1), tx_vals, grad_vals, rx_gate), axis=1)
+        # Rx updates
+        rx_id = block['adc']
+        if rx_id != 0:
+            rx_event = self._adc_events[rx_id]
+            rx_start = rx_event['delay']
+            rx_end = rx_start + rx_event['num'] * self._rx_t
+            readout_num += rx_event['num']
+            out_dict['adc_gate'] = (np.array([rx_start, rx_end]), np.array([1, 0]))
+            duration = max(duration, rx_end)
 
         # Return durations for each PR and leading edge values
-        return (out_arr, duration)
+        return (out_dict, duration, int(readout_num))
     #endregion
 
     # Helper functions for reading sections
@@ -835,6 +766,6 @@ class PSInterpreter:
 if __name__ == '__main__':
     ps = PSInterpreter()
     inp_file = '../ocra-pulseq/test_files/test_loopback.seq'
-    out_arr, params = ps.compile(inp_file)
-    print(out_arr[:, 0])
+    out_data, params = ps.interpret(inp_file)
+    print(out_data)
     print("Completed successfully")
