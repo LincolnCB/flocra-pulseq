@@ -80,7 +80,7 @@ class PSInterpreter:
         }
 
         # Defined variable names to output
-        self._var_names = ('tx', 'gx', 'gy', 'gz', 'adc_gate')
+        self._var_names = ('tx0', 'grad_vx', 'grad_vy', 'grad_vz', 'rx0_rst_n')
 
         # PulSeq dictionary storage
         self._blocks = {}
@@ -371,7 +371,7 @@ class PSInterpreter:
             tx_len = len(tx_updates)
             tx_end = tx_start + tx_len * self._tx_t
             tx_times = np.linspace(tx_start, tx_end, num=tx_len, endpoint=False) # us
-            out_dict['tx'] = (tx_times, tx_updates)
+            out_dict['tx0'] = (tx_times, tx_updates)
             duration = max(duration, tx_end)
            
         # Gradient updates
@@ -383,7 +383,8 @@ class PSInterpreter:
                 grad_len = len(grad_updates)
                 grad_end = grad_start + grad_len * self._grad_t
                 grad_times = np.linspace(grad_start, grad_end, num=grad_len, endpoint=False) # us
-                out_dict[grad_ch] = (grad_times, grad_updates)
+                grad_var_name = grad_ch[0] + 'rad_v' + grad_ch[1] # To get the correct varname for output gCH -> grad_vCH
+                out_dict[grad_var_name] = (grad_times, grad_updates)
                 duration = max(duration, grad_end)
 
         # Rx updates
@@ -393,7 +394,7 @@ class PSInterpreter:
             rx_start = rx_event['delay']
             rx_end = rx_start + rx_event['num'] * self._rx_t
             readout_num += rx_event['num']
-            out_dict['adc_gate'] = (np.array([rx_start, rx_end]), np.array([1, 0]))
+            out_dict['rx0_rst_n'] = (np.array([rx_start, rx_end]), np.array([1, 0]))
             duration = max(duration, rx_end)
 
         # Return durations for each PR and leading edge values
