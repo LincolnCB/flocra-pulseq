@@ -22,18 +22,18 @@ class PSInterpreter:
     """
 
     def __init__(self, rf_center=3e+6, rf_amp_max=5e+3, grad_max=1e+7,
-                 clk_t=7e-3, tx_t=1.001, grad_t=10.003,
+                 clk_t=1/122.88, tx_t=123/122.88, grad_t=1229/122.88,
                  pulseq_t_match=False, ps_tx_t=1, ps_grad_t=10):
         """
         Create PSInterpreter object for FLOCRA with system parameters.
 
         Args:
-            rf_center (int): RF center (local oscillator frequency) in Hz.
-            rf_amp_max (int): Default 5e+3 -- System RF amplitude max in Hz.
-            grad_max (int): Default 1e+6 -- System gradient max in Hz/m.
-            clk_t (float): Default 7e-3 -- System clock period in us.
-            tx_t (float): Default 1.001 -- Transmit raster period in us.
-            grad_t (float): Default 10.003 -- Gradient raster period in us.
+            rf_center (float): RF center (local oscillator frequency) in Hz.
+            rf_amp_max (float): Default 5e+3 -- System RF amplitude max in Hz.
+            grad_max (float): Default 1e+6 -- System gradient max in Hz/m.
+            clk_t (float): Default 1/122.88 -- System clock period in us.
+            tx_t (float): Default 123/122.88 -- Transmit raster period in us.
+            grad_t (float): Default 1229/122.88 -- Gradient raster period in us.
             pulseq_t_match (bool): Default False -- If PulSeq file transmit and gradient raster times match FLOCRA transmit and raster times.
             ps_tx_t (float): Default 1 -- PulSeq transmit raster period in us. Used only if pulseq_t_match is False.
             ps_grad_t (float): Default 10 -- PulSeq gradient raster period in us. Used only if pulseq_t_match is False.
@@ -46,11 +46,11 @@ class PSInterpreter:
         self._tx_div = int(tx_t / self._clk_t + ROUNDING) # Clock cycles per tx
         self._tx_t = tx_t # Transmit sample period in us
         self._warning_if(self._tx_div * self._clk_t != tx_t, 
-            f'tx_t ({tx_t}) rounded to {self._tx_t}, multiple of clk_t ({clk_t})')
+            f"tx_t ({tx_t}) isn't a multiple of clk_t ({clk_t})")
         self._grad_div = int(grad_t / self._clk_t + ROUNDING) # Clock cycles per grad
-        self._grad_t = clk_t * self._grad_div # Gradient sample period in us
+        self._grad_t = grad_t # Gradient sample period in us
         self._warning_if(self._grad_div * self._clk_t != grad_t, 
-            f'grad_t ({(grad_t)}) rounded to {self._grad_t}, multiple of clk_t ({clk_t})')
+            f"grad_t ({(grad_t)}) isn't multiple of clk_t ({clk_t})")
         self._rx_div = None
         self._rx_t = None
 
@@ -377,7 +377,7 @@ class PSInterpreter:
         # Gradient updates
         for grad_ch in ('gx', 'gy', 'gz'):
             grad_id = block[grad_ch]
-            if tx_id != 0:
+            if grad_id != 0:
                 grad_updates = self._grad_data[grad_id]
                 grad_start = self._grad_delays[grad_id]
                 grad_len = len(grad_updates)

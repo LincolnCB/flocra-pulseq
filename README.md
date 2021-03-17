@@ -5,17 +5,17 @@ Pulseq interpreter for vnegnev's flow-based OCRA (FLOCRA)
 Create interpreter with PSInterpreter. Run PSInterpreter.interpret to get output array and dictionary
 
 # Arguments
-rf_center (int): RF center (local oscillator frequency) in Hz.
+rf_center (float): RF center (local oscillator frequency) in Hz.
 
-rf_amp_max (int): Default 5e+3 -- System RF amplitude max in Hz.
+rf_amp_max (float): Default 5e+3 -- System RF amplitude max in Hz.
 
-grad_max (int): Default 1e+6 -- System gradient max in Hz/m.
+grad_max (float): Default 1e+6 -- System gradient max in Hz/m.
 
-clk_t (float): Default 7e-3 -- System clock period in us.
+clk_t (float): Default 1/122.88 -- System clock period in us.
 
-tx_t (float): Default 1.001 -- Transmit raster period in us.
+tx_t (float): Default 123/122.88 -- Transmit raster period in us.
 
-grad_t (float): Default 10.003 -- Gradient raster period in us.
+grad_t (float): Default 1229/122.88 -- Gradient raster period in us.
 
 pulseq_t_match (bool): Default False -- If PulSeq file transmit and gradient raster times match FLOCRA transmit and raster times.
 
