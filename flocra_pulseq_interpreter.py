@@ -8,9 +8,6 @@ import logging # For errors
 import struct
 import io
 
-ROUNDING = 0
-# TODO: Split up gradients
-
 class PSInterpreter:
     """
     Interpret object that can compile a PulSeq file into a FLOCRA update stream array. 
@@ -44,10 +41,10 @@ class PSInterpreter:
 
         self._clk_t = clk_t # Instruction clock period in us
         self._tx_t = tx_t # Transmit sample period in us
-        self._warning_if(int(tx_t / self._clk_t + ROUNDING) * self._clk_t != tx_t, 
+        self._warning_if(int(tx_t / self._clk_t) * self._clk_t != tx_t, 
             f"tx_t ({tx_t}) isn't a multiple of clk_t ({clk_t})")
         self._grad_t = grad_t # Gradient sample period in us
-        self._warning_if(int(grad_t / self._clk_t + ROUNDING) * self._clk_t != grad_t, 
+        self._warning_if(int(grad_t / self._clk_t) * self._clk_t != grad_t, 
             f"grad_t ({(grad_t)}) isn't multiple of clk_t ({clk_t})")
         self._rx_div = None
         self._rx_t = None
@@ -173,11 +170,11 @@ class PSInterpreter:
         for events in [self._blocks.values(), self._rf_events.values(), self._grad_events.values(), 
                         self._adc_events.values()]:
             for event in events:
-                self._warning_if(int(event['delay'] / self._clk_t + ROUNDING) * self._clk_t != event['delay'],
-                    f'Event delay {event["delay"]} is not a multiple of clk_t, rounding')
+                self._warning_if(int(event['delay'] / self._clk_t) * self._clk_t != event['delay'],
+                    f'Event delay {event["delay"]} is not a multiple of clk_t')
         for delay in self._delay_events.values():
-            self._warning_if(int(delay / self._clk_t + ROUNDING) * self._clk_t != delay,
-                f'Delay event {delay} is not a multiple of clk_t, rounding')
+            self._warning_if(int(delay / self._clk_t) * self._clk_t != delay,
+                f'Delay event {delay} is not a multiple of clk_t')
         
         # Check that RF/ADC (TX/RX) only have one frequency offset -- can't be set within one file.
         freq = None
@@ -633,7 +630,8 @@ class PSInterpreter:
                 while i < n:
                     dx = float(self._simplify(f.readline()))
                     x += dx
-                    self._warning_if(x > 1 or x < 0, f'Shape {shape_id} entry {i} is {x}, outside of [0, 1], rounding')
+                    self._warning_if(x > 1 or x < 0, f'Shape {shape_id} entry {i} is {x},'
+                    ' outside of [0, 1], will be capped')
                     if x > 1:
                         x = 1
                     elif x < 0:
@@ -644,7 +642,8 @@ class PSInterpreter:
                         for _ in range(0, r):
                             i += 1
                             x += dx
-                            self._warning_if(x > 1 or x < 0, f'Shape {shape_id} entry {i} is {x}, outside of [0, 1], rounding')
+                            self._warning_if(x > 1 or x < 0, f'Shape {shape_id} entry {i} is {x},'
+                            ' outside of [0, 1], will be capped')
                             if x > 1:
                                 x = 1
                             elif x < 0:
