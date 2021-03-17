@@ -43,13 +43,11 @@ class PSInterpreter:
         logging.basicConfig(filename = 'psassembler.log', filemode = 'w', level = logging.DEBUG)
 
         self._clk_t = clk_t # Instruction clock period in us
-        self._tx_div = int(tx_t / self._clk_t + ROUNDING) # Clock cycles per tx
         self._tx_t = tx_t # Transmit sample period in us
-        self._warning_if(self._tx_div * self._clk_t != tx_t, 
+        self._warning_if(int(tx_t / self._clk_t + ROUNDING) * self._clk_t != tx_t, 
             f"tx_t ({tx_t}) isn't a multiple of clk_t ({clk_t})")
-        self._grad_div = int(grad_t / self._clk_t + ROUNDING) # Clock cycles per grad
         self._grad_t = grad_t # Gradient sample period in us
-        self._warning_if(self._grad_div * self._clk_t != grad_t, 
+        self._warning_if(int(grad_t / self._clk_t + ROUNDING) * self._clk_t != grad_t, 
             f"grad_t ({(grad_t)}) isn't multiple of clk_t ({clk_t})")
         self._rx_div = None
         self._rx_t = None
