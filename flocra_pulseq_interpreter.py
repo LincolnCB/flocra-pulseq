@@ -19,8 +19,7 @@ class PSInterpreter:
     """
 
     def __init__(self, rf_center=3e+6, rf_amp_max=5e+3, grad_max=1e+7,
-                 clk_t=1/122.88, tx_t=123/122.88, grad_t=1229/122.88,
-                 pulseq_t_match=False, ps_tx_t=1, ps_grad_t=10):
+                 clk_t=1/122.88, tx_t=123/122.88, grad_t=1229/122.88):
         """
         Create PSInterpreter object for FLOCRA with system parameters.
 
@@ -31,9 +30,6 @@ class PSInterpreter:
             clk_t (float): Default 1/122.88 -- System clock period in us.
             tx_t (float): Default 123/122.88 -- Transmit raster period in us.
             grad_t (float): Default 1229/122.88 -- Gradient raster period in us.
-            pulseq_t_match (bool): Default False -- If PulSeq file transmit and gradient raster times match FLOCRA transmit and raster times.
-            ps_tx_t (float): Default 1 -- PulSeq transmit raster period in us. Used only if pulseq_t_match is False.
-            ps_grad_t (float): Default 10 -- PulSeq gradient raster period in us. Used only if pulseq_t_match is False.
         """
         # Logging
         self._logger = logging.getLogger()
@@ -48,13 +44,6 @@ class PSInterpreter:
             f"grad_t ({(grad_t)}) isn't multiple of clk_t ({clk_t})")
         self._rx_div = None
         self._rx_t = None
-
-        if not pulseq_t_match:
-            self._ps_tx_t = ps_tx_t # us
-            self._ps_grad_t = ps_grad_t # us
-        else:
-            self._ps_tx_t = tx_t # us
-            self._ps_grad_t = grad_t # us
 
         self._rf_center = rf_center # Hz
         self._rf_amp_max = rf_amp_max # Hz
@@ -87,10 +76,12 @@ class PSInterpreter:
         self._definitions = {}    
 
         # Interpolated and compiled data for output
-        self._tx_data = {}
-        self._grad_data = {}
-        self._tx_delays = {} # us
-        self._grad_delays = {} # us
+        self._tx_durations = {} # us
+        self._tx_times = {} # us
+        self._tx_data = {} # normalized float
+        self._grad_durations = {} # us
+        self._grad_times = {} # us
+        self._grad_data = {} # normalized float
 
         self.out_data = {}
         self.readout_number = 0
@@ -112,8 +103,7 @@ class PSInterpreter:
         if self.is_assembled:
             self._logger.info('Re-initializing over old sequence...')
             self.__init__(rf_center=self._rf_center, rf_amp_max=self._rf_amp_max, grad_max=self._grad_max,
-                clk_t=self._clk_t, tx_t=self._tx_t, grad_t=self._grad_t,
-                ps_tx_t=self._ps_tx_t, ps_grad_t=self._ps_grad_t)
+                clk_t=self._clk_t, tx_t=self._tx_t, grad_t=self._grad_t)
         self._read_pulseq(pulseq_file)
         self._compile_tx_data()
         self._compile_grad_data()
@@ -227,29 +217,26 @@ class PSInterpreter:
             # Collect mag/phase shapes
             mag_shape = self._shapes[tx_event['mag_id']]
             phase_shape = self._shapes[tx_event['phase_id']]
-            self._warning_if(len(mag_shape) != len(phase_shape), f'Tx envelope of RF event {tx_id} has mismatched magnitude ' \
-                'and phase information, the last entry of the shorter will be extended')
+            self._error_if(len(mag_shape) != len(phase_shape), f'Tx envelope of RF event {tx_id} has mismatched magnitude ' \
+                'and phase length')
 
-            # Event duration and interpolated length -- extends shorter of phase/mag shape to length of longer   
-            pulse_duration = max(len(mag_shape), len(phase_shape)) * self._ps_tx_t # us          
-            pulse_len = int(max(len(mag_shape), len(phase_shape)) * (self._ps_tx_t / self._tx_t)) # unitless
-            self._error_if(pulse_len < 1, f'RF event {tx_id} duration {pulse_duration} is too short for a tx_t of {self._tx_t}')
-            
-            # Interpolate values on falling edge (and extend past end of shorter, if needed)
-            x = np.flip(np.linspace(pulse_len * self._tx_t, 0, num=pulse_len, endpoint=False)) # us
-            mag_x_ps = np.flip(np.linspace(len(mag_shape)* self._ps_tx_t, 0, num=len(mag_shape), endpoint=False))
-            phase_x_ps = np.flip(np.linspace(len(phase_shape)* self._ps_tx_t, 0, num=len(phase_shape), endpoint=False))
-            mag_interp = np.interp(x, mag_x_ps, mag_shape) * tx_event['amp'] / self._rf_amp_max
-            phase_interp = np.interp(x, phase_x_ps, phase_shape) * 2 * np.pi
+            # Event length and duration, create time points
+            event_len = len(mag_shape) # unitless
+            event_duration = event_len * self._tx_t # us
+            self._error_if(event_len < 1, f"Zero length shape: {tx_event['mag_id']}")
+            x = np.linspace(0, event_duration, num = event_len, endpoint=False)
 
-            # Convert to complex tx envelope
-            tx_env = np.exp((phase_interp + tx_event['phase']) * 1j) * mag_interp
+            # Scale and convert to complex Tx envelope
+            mag = mag_shape * tx_event['amp'] / self._rf_amp_max
+            phase = phase_shape * 2 * np.pi
+            tx_env = np.exp((phase + tx_event['phase']) * 1j) * mag
             
             self._error_if(np.any(np.abs(tx_env) > 1.0), f'Magnitude of RF event {tx_id} is too ' \
                 f'large relative to RF max {self._rf_amp_max}')
             
-            # Save tx data, delay, and duration
-            self._tx_delays[tx_id] = tx_event['delay']
+            # Save tx duration, update times, data
+            self._tx_durations[tx_id] = event_duration + tx_event['delay']
+            self._tx_times[tx_id] = x + tx_event['delay']
             self._tx_data[tx_id] = tx_env
 
         self._logger.info('Tx data compiled')
@@ -264,33 +251,51 @@ class PSInterpreter:
         # Process each rf event
         for grad_id, grad_event in self._grad_events.items():
 
-            # Collect shapes
-            if len(grad_event) == 5:
-                # Simple trapezoid shape
-                shape = np.array([0, grad_event['amp'], grad_event['amp'], 0])
-                event_duration = grad_event['rise'] + grad_event['flat'] + grad_event['fall'] # us
-                event_len = int(event_duration / self._grad_t) # unitless
+            # Collect shapes, create time points
+            if len(grad_event) == 5: # Trapezoid shape
+                
+                # Check for timing issues
+                for time in ['rise', 'flat', 'fall']:
+                    self._error_if(grad_event[time] < self._grad_t, f'Trapezoid {grad_id} has {time} ' \
+                        f"time ({grad_event[time]}) less than raster time ({self._grad_t})")
+                    self._warning_if(int(grad_event[time] / self._grad_t) * self._grad_t != grad_event[time],
+                        f"Trapezoid {grad_id} {time} time ({grad_event[time]}) isn't a multiple of raster time ({self._grad_t})")
+
+                # Raster out rise and fall times, prioritize flat time and zero ending
+                rise_len = int(grad_event['rise'] / self._grad_t)
+                fall_len = int(grad_event['fall'] / self._grad_t)
+
+                x_rise = np.linspace(grad_event['rise'] - rise_len * self._grad_t,
+                 grad_event['rise'],
+                 num=rise_len, endpoint=False)
+                rise = np.flip(np.linspace(grad_event['amp'], 0, num=rise_len, endpoint=False))
+
+                x_fall = np.linspace(grad_event['rise'] + grad_event['flat'],
+                 grad_event['rise'] + grad_event['flat'] + fall_len * self._grad_t,
+                 num=fall_len, endpoint=False)
+                fall = np.flip(np.linspace(0, grad_event['amp'], num=fall_len, endpoint=False))
+
+                # Concatenate times and data
+                x = np.concatenate((x_rise, x_fall))
+                grad = np.concatenate((rise, fall))
+
+                event_duration = grad_event['rise'] + grad_event['flat'] + grad_event['fall'] # us    
             else:
-                shape = self._shapes[grad_event['shape_id']]
-                # Event duration and interpolated length -- extends shorter of phase/mag shape to length of longer   
-                event_duration = len(shape) * self._ps_grad_t # us          
-                event_len = int(len(shape) * (self._ps_grad_t / self._grad_t)) # unitless
-            self._error_if(event_len < 1, f'Gradient event {grad_id} duration {event_duration} is too short for a grad_t of {self._grad_t}')
+                # Event length and duration, create time points
+                shape = grad_event['shape_id']
+                event_len = len(shape) # unitless
+                event_duration = event_len * self._grad_t # us
+                self._error_if(event_len < 1, f"Zero length shape: {grad_event['shape_id']}")
+                grad = shape * grad_event['amp'] / self._grad_max
+                x = np.linspace(0, event_duration, num = event_len, endpoint=False)
             
-            # Interpolate values on falling edge
-            x = np.flip(np.linspace(event_len * self._grad_t, 0, num=event_len, endpoint=False)) # us
-            if len(grad_event) == 5:
-                x_ps = np.array([0, grad_event['rise'], grad_event['rise'] + grad_event['flat'], event_duration])
-            else:    
-                x_ps = np.flip(np.linspace(event_duration, 0, num=len(shape), endpoint=False))
-            grad_interp = np.interp(x, x_ps, shape) * grad_event['amp'] / self._grad_max
-            
-            self._error_if(np.any(np.abs(grad_interp) > 1.0), f'Magnitude of gradient event {grad_id} is too ' \
+            self._error_if(np.any(np.abs(grad) > 1.0), f'Magnitude of gradient event {grad_id} is too ' \
                 f'large relative to gradient max {self._grad_max}')
             
-            # Save tx data, delay, and duration
-            self._grad_delays[grad_id] = grad_event['delay']
-            self._grad_data[grad_id] = grad_interp
+            # Save grad duration, update times, data
+            self._grad_durations[grad_id] = event_duration + grad_event['delay']
+            self._grad_times[grad_id] = x + grad_event['delay']
+            self._grad_data[grad_id] = grad
     
         self._logger.info('Gradient data compiled')
 
@@ -361,26 +366,16 @@ class PSInterpreter:
         # Tx updates
         tx_id = block['rf']
         if tx_id != 0:
-            tx_updates = self._tx_data[tx_id]
-            tx_start = self._tx_delays[tx_id]
-            tx_len = len(tx_updates)
-            tx_end = tx_start + tx_len * self._tx_t
-            tx_times = np.linspace(tx_start, tx_end, num=tx_len, endpoint=False) # us
-            out_dict['tx0'] = (tx_times, tx_updates)
-            duration = max(duration, tx_end)
+            out_dict['tx0'] = (self._tx_times[tx_id], self._tx_data[tx_id])
+            duration = max(duration, self._tx_durations[tx_id])
            
         # Gradient updates
         for grad_ch in ('gx', 'gy', 'gz'):
             grad_id = block[grad_ch]
             if grad_id != 0:
-                grad_updates = self._grad_data[grad_id]
-                grad_start = self._grad_delays[grad_id]
-                grad_len = len(grad_updates)
-                grad_end = grad_start + grad_len * self._grad_t
-                grad_times = np.linspace(grad_start, grad_end, num=grad_len, endpoint=False) # us
-                grad_var_name = grad_ch[0] + 'rad_v' + grad_ch[1] # To get the correct varname for output gCH -> grad_vCH
-                out_dict[grad_var_name] = (grad_times, grad_updates)
-                duration = max(duration, grad_end)
+                grad_var_name = grad_ch[0] + 'rad_v' + grad_ch[1] # To get the correct varname for output g[CH] -> grad_v[CH]
+                out_dict[grad_var_name] = (self._grad_times[grad_id], self._grad_data[grad_id])
+                duration = max(duration, self._grad_durations[grad_id])
 
         # Rx updates
         rx_id = block['adc']

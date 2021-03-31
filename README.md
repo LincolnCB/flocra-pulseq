@@ -17,12 +17,6 @@ tx_t (float): Default 123/122.88 -- Transmit raster period in us.
 
 grad_t (float): Default 1229/122.88 -- Gradient raster period in us.
 
-pulseq_t_match (bool): Default False -- If PulSeq file transmit and gradient raster times match FLOCRA transmit and raster times.
-
-ps_tx_t (float): Default 1 -- PulSeq transmit raster period in us. Used only if pulseq_t_match is False.
-
-ps_grad_t (float): Default 10 -- PulSeq gradient raster period in us. Used only if pulseq_t_match is False.
-
 # Outputs
 dict: tuple of numpy.ndarray time and update arrays, with variable name keys
 
