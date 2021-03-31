@@ -13,9 +13,9 @@ grad_max (float): Default 1e+6 -- System gradient max in Hz/m.
 
 clk_t (float): Default 1/122.88 -- System clock period in us.
 
-tx_t (float): Default 123/122.88 -- Transmit raster period in us.
+tx_t (float): Default 123/122.88 -- Transmit raster period in us. Will be overwritten if the PulSeq file includes a "tx_t" in the definitions
 
-grad_t (float): Default 1229/122.88 -- Gradient raster period in us.
+grad_t (float): Default 1229/122.88 -- Gradient raster period in us. Will be overwritten if the PulSeq file includes a "grad_t" in the definitions
 
 # Outputs
 dict: tuple of numpy.ndarray time and update arrays, with variable name keys

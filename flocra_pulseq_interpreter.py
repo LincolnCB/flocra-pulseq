@@ -677,7 +677,15 @@ class PSInterpreter:
                     value = float(value)
                 except:
                     pass
-                self._definitions[varname] = value
+
+                # Automatic raster time reading
+                if varname == 'tx_t':
+                    self._tx_t = value
+                elif varname == 'grad_t':
+                    self._grad_t = value
+                else:
+                    self._definitions[varname] = value
+                
                 self._logger.debug(f'Read in {varname}')
 
         self._logger.info('Definitions: Complete')
