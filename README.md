@@ -2,7 +2,7 @@
 Pulseq interpreter for vnegnev's flow-based OCRA (FLOCRA)
 
 # Usage:
-Create interpreter with PSInterpreter. Run PSInterpreter.interpret to get output array and dictionary
+Create interpreter with PSInterpreter. Run PSInterpreter.interpret to get output array and dictionary. Errors, warning, and progress logged.
 
 # Arguments
 rf_center (float): RF center (local oscillator frequency) in Hz.
@@ -16,6 +16,8 @@ clk_t (float): Default 1/122.88 -- System clock period in us.
 tx_t (float): Default 123/122.88 -- Transmit raster period in us. Will be overwritten if the PulSeq file includes a "tx_t" in the definitions
 
 grad_t (float): Default 1229/122.88 -- Gradient raster period in us. Will be overwritten if the PulSeq file includes a "grad_t" in the definitions
+
+log_file (str): Default 'ps_interpreter' -- File (.log appended) to write run log into
 
 # Outputs
 dict: tuple of numpy.ndarray time and update arrays, with variable name keys

@@ -19,7 +19,8 @@ class PSInterpreter:
     """
 
     def __init__(self, rf_center=3e+6, rf_amp_max=5e+3, grad_max=1e+7,
-                 clk_t=1/122.88, tx_t=123/122.88, grad_t=1229/122.88):
+                 clk_t=1/122.88, tx_t=123/122.88, grad_t=1229/122.88,
+                 log_file = 'ps_interpreter'):
         """
         Create PSInterpreter object for FLOCRA with system parameters.
 
@@ -30,10 +31,11 @@ class PSInterpreter:
             clk_t (float): Default 1/122.88 -- System clock period in us.
             tx_t (float): Default 123/122.88 -- Transmit raster period in us.
             grad_t (float): Default 1229/122.88 -- Gradient raster period in us.
+            log_file (str): Default 'ps_interpreter' -- File (.log appended) to write run log into
         """
         # Logging
         self._logger = logging.getLogger()
-        logging.basicConfig(filename = 'psassembler.log', filemode = 'w', level = logging.DEBUG)
+        logging.basicConfig(filename = log_file + '.log', filemode = 'w', level = logging.DEBUG)
 
         self._clk_t = clk_t # Instruction clock period in us
         self._tx_t = tx_t # Transmit sample period in us
