@@ -13,9 +13,11 @@ grad_max (float): Default 1e+6 -- System gradient max in Hz/m.
 
 clk_t (float): Default 1/122.88 -- System clock period in us.
 
-tx_t (float): Default 123/122.88 -- Transmit raster period in us. Will be overwritten if the PulSeq file includes a "tx_t" in the definitions
+tx_t (float): Default 123/122.88 -- Transmit raster period in us. Will be overwritten if the PulSeq file includes a "tx_t" in the definitions.
 
-grad_t (float): Default 1229/122.88 -- Gradient raster period in us. Will be overwritten if the PulSeq file includes a "grad_t" in the definitions
+grad_t (float): Default 1229/122.88 -- Gradient raster period in us. Will be overwritten if the PulSeq file includes a "grad_t" in the definitions.
+
+tx_warmup (float): Default 500 -- Warmup time to turn on tx_gate before Tx events in us. Will be overwritten if the PulSeq file includes a "tx_warmup" in the definitions.
 
 log_file (str): Default 'ps_interpreter' -- File (.log appended) to write run log into
 

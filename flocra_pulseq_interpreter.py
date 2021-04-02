@@ -20,7 +20,7 @@ class PSInterpreter:
 
     def __init__(self, rf_center=3e+6, rf_amp_max=5e+3, grad_max=1e+7,
                  clk_t=1/122.88, tx_t=123/122.88, grad_t=1229/122.88,
-                 log_file = 'ps_interpreter'):
+                 tx_warmup=500, log_file = 'ps_interpreter'):
         """
         Create PSInterpreter object for FLOCRA with system parameters.
 
@@ -31,7 +31,8 @@ class PSInterpreter:
             clk_t (float): Default 1/122.88 -- System clock period in us.
             tx_t (float): Default 123/122.88 -- Transmit raster period in us.
             grad_t (float): Default 1229/122.88 -- Gradient raster period in us.
-            log_file (str): Default 'ps_interpreter' -- File (.log appended) to write run log into
+            tx_warmup (float): Default 500 -- Warmup time to turn on tx_gate before Tx events in us.
+            log_file (str): Default 'ps_interpreter' -- File (.log appended) to write run log into.
         """
         # Logging
         self._logger = logging.getLogger()
@@ -50,6 +51,7 @@ class PSInterpreter:
         self._rf_center = rf_center # Hz
         self._rf_amp_max = rf_amp_max # Hz
         self._grad_max = grad_max # Hz/m
+        self._tx_warmup = tx_warmup # us
 
         # Interpreter for section names in .seq file
         self._pulseq_keys = {
@@ -66,7 +68,7 @@ class PSInterpreter:
         }
 
         # Defined variable names to output
-        self._var_names = ('tx0', 'grad_vx', 'grad_vy', 'grad_vz', 'rx0_en')
+        self._var_names = ('tx0', 'grad_vx', 'grad_vy', 'grad_vz', 'rx0_en', 'tx_gate')
 
         # PulSeq dictionary storage
         self._blocks = {}
@@ -334,10 +336,6 @@ class PSInterpreter:
         out_data = {var: (np.concatenate(times[var]), np.concatenate(updates[var]))
                 for var in self._var_names}
 
-
-        # TODO zero between blocks (smart)
-        # TODO tx_gate for warm-up
-
         return (out_data, readout_total)
 
     # Convert individual block into PR commands (duration, gates), TX offset, and GRAD offset
@@ -366,11 +364,17 @@ class PSInterpreter:
         if block['delay'] != 0:
             duration = max(duration, self._delay_events[block['delay']])
 
-        # Tx updates
+        # Tx and Tx gate updates
         tx_id = block['rf']
         if tx_id != 0:
             out_dict['tx0'] = (self._tx_times[tx_id], self._tx_data[tx_id])
             duration = max(duration, self._tx_durations[tx_id])
+            tx_gate_start = self._tx_times[0] - self._tx_warmup
+            self._warning_if(tx_gate_start < 0,
+                f'Tx warmup ({self._tx_warmup}) of RF block {tx_id} is less than delay ({self._tx_times[0]})')
+            out_dict['tx_gate'] = (np.array([tx_gate_start, self._tx_durations[tx_id]]),
+                np.array([1, 0]))
+
 
         # Gradient updates
         for grad_ch in ('gx', 'gy', 'gz'):
@@ -684,8 +688,13 @@ class PSInterpreter:
                 # Automatic raster time reading
                 if varname == 'tx_t':
                     self._tx_t = value
+                    self._logger.info(f'Overwriting tx_t to {value} from Definitions')
                 elif varname == 'grad_t':
                     self._grad_t = value
+                    self._logger.info(f'Overwriting grad_t to {value} from Definitions')
+                elif varname == 'tx_warmup':
+                    self._tx_warmup = value
+                    self._logger.info(f'Overwriting tx_warmup to {value} from Definitions')
                 else:
                     self._definitions[varname] = value
 
