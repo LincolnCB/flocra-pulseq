@@ -369,7 +369,7 @@ class PSInterpreter:
         if tx_id != 0:
             out_dict['tx0'] = (self._tx_times[tx_id], self._tx_data[tx_id])
             duration = max(duration, self._tx_durations[tx_id])
-            tx_gate_start = self._tx_times[0] - self._tx_warmup
+            tx_gate_start = self._tx_times[tx_id][0] - self._tx_warmup
             self._error_if(tx_gate_start < 0,
                 f'Tx warmup ({self._tx_warmup}) of RF block {tx_id} is less than delay ({self._tx_times[0]})')
             out_dict['tx_gate'] = (np.array([tx_gate_start, self._tx_durations[tx_id]]),
