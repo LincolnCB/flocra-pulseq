@@ -287,7 +287,7 @@ class PSInterpreter:
 
                 # Concatenate times and data
                 x = np.concatenate((x_rise, x_fall))
-                grad = np.concatenate((rise, fall))
+                grad = np.concatenate((rise, fall)) / self._grad_max
 
                 event_duration = grad_event['rise'] + grad_event['flat'] + grad_event['fall'] # us
             else:
