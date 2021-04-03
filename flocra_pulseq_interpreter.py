@@ -18,7 +18,7 @@ class PSInterpreter:
         readout_number (int): Expected number of readouts
     """
 
-    def __init__(self, rf_center=3e+6, rf_amp_max=5e+3, grad_max=1e+7,
+    def __init__(self, rf_center=3e+6, rf_amp_max=5e+3, rf_ends_zero=False, grad_max=1e+7,
                  clk_t=1/122.88, tx_t=123/122.88, grad_t=1229/122.88,
                  tx_warmup=500, log_file = 'ps_interpreter'):
         """
@@ -27,6 +27,7 @@ class PSInterpreter:
         Args:
             rf_center (float): RF center (local oscillator frequency) in Hz.
             rf_amp_max (float): Default 5e+3 -- System RF amplitude max in Hz.
+            rf_ends_zero (bool): Default False -- Force end of RF block to end with 0 if True.
             grad_max (float): Default 1e+6 -- System gradient max in Hz/m.
             clk_t (float): Default 1/122.88 -- System clock period in us.
             tx_t (float): Default 123/122.88 -- Transmit raster period in us.
@@ -50,6 +51,7 @@ class PSInterpreter:
 
         self._rf_center = rf_center # Hz
         self._rf_amp_max = rf_amp_max # Hz
+        self._rf_ends_zero = rf_ends_zero
         self._grad_max = grad_max # Hz/m
         self._tx_warmup = tx_warmup # us
 
@@ -241,6 +243,9 @@ class PSInterpreter:
 
             # Save tx duration, update times, data
             self._tx_durations[tx_id] = event_duration + tx_event['delay']
+            if self._rf_ends_zero and tx_env[-1] != 0:
+                tx_env = np.append(tx_env, 0)
+                x = np.append(x, x[-1] + self._tx_t)
             self._tx_times[tx_id] = x + tx_event['delay']
             self._tx_data[tx_id] = tx_env
 
