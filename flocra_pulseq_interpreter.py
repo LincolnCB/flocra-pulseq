@@ -319,6 +319,7 @@ class PSInterpreter:
             int: number of sequence readout points
         """
         # Prep containers
+        out_data = {}
         times = {var: [] for var in self._var_names}
         updates = {var: [] for var in self._var_names}
         start = 0
@@ -338,8 +339,18 @@ class PSInterpreter:
             times[var].append(np.zeros(1) + start)
             updates[var].append(np.zeros(1))
 
-        out_data = {var: (np.concatenate(times[var]), np.concatenate(updates[var]))
-                for var in self._var_names}
+        # Clean up final arrays
+        for var in self._var_names:
+            # Make sure times are ordered, and overwrite duplicates to latest update
+            time_sorted, unique_idx = np.unique(np.flip(np.concatenate(times[var])), return_index=True)
+            update_sorted = np.flip(np.concatenate(updates[var]))[unique_idx]
+
+            # Compressed repeated values
+            update_compressed_idx = np.concatenate([[0], np.nonzero(update_sorted[1:] - update_sorted[:-1])[0] + 1])
+            update_arr = update_sorted[update_compressed_idx]
+            time_arr = time_sorted[update_compressed_idx]
+
+            out_data[var] = (time_arr, update_arr)
 
         return (out_data, readout_total)
 
