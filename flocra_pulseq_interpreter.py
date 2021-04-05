@@ -282,12 +282,12 @@ class PSInterpreter:
 
                 # Concatenate times and data
                 x = np.concatenate((x_rise, x_fall))
-                grad = np.concatenate((rise, fall))
+                grad = np.concatenate((rise, fall)) / self._grad_max
 
                 event_duration = grad_event['rise'] + grad_event['flat'] + grad_event['fall'] # us
             else:
                 # Event length and duration, create time points
-                shape = grad_event['shape_id']
+                shape = self._shapes[grad_event['shape_id']]
                 event_len = len(shape) # unitless
                 event_duration = event_len * self._grad_t # us
                 self._error_if(event_len < 1, f"Zero length shape: {grad_event['shape_id']}")
@@ -314,6 +314,7 @@ class PSInterpreter:
             int: number of sequence readout points
         """
         # Prep containers
+        out_data = {}
         times = {var: [] for var in self._var_names}
         updates = {var: [] for var in self._var_names}
         start = 0
@@ -322,9 +323,15 @@ class PSInterpreter:
         # Encode all blocks
         for block_id in self._blocks.keys():
             var_dict, duration, readout_num = self._stream_block(block_id)
+
             for var in self._var_names:
                 times[var].append(var_dict[var][0] + start)
                 updates[var].append(var_dict[var][1])
+            
+            # Zero tx
+            times['tx0'].append(times['tx0'][-1][-1:] + self._tx_t)
+            updates['tx0'].append(np.zeros(1))
+
             start += duration
             readout_total += readout_num
 
@@ -333,8 +340,18 @@ class PSInterpreter:
             times[var].append(np.zeros(1) + start)
             updates[var].append(np.zeros(1))
 
-        out_data = {var: (np.concatenate(times[var]), np.concatenate(updates[var]))
-                for var in self._var_names}
+        # Clean up final arrays
+        for var in self._var_names:
+            # Make sure times are ordered, and overwrite duplicates to latest update
+            time_sorted, unique_idx = np.unique(np.flip(np.concatenate(times[var])), return_index=True)
+            update_sorted = np.flip(np.concatenate(updates[var]))[unique_idx]
+
+            # Compressed repeated values
+            update_compressed_idx = np.concatenate([[0], np.nonzero(update_sorted[1:] - update_sorted[:-1])[0] + 1])
+            update_arr = update_sorted[update_compressed_idx]
+            time_arr = time_sorted[update_compressed_idx]
+
+            out_data[var] = (time_arr, update_arr)
 
         return (out_data, readout_total)
 
@@ -366,11 +383,11 @@ class PSInterpreter:
 
         # Tx and Tx gate updates
         tx_id = block['rf']
-        if tx_id != 0:
+        if tx_id != 0: 
             out_dict['tx0'] = (self._tx_times[tx_id], self._tx_data[tx_id])
             duration = max(duration, self._tx_durations[tx_id])
             tx_gate_start = self._tx_times[tx_id][0] - self._tx_warmup
-            self._error_if(tx_gate_start < 0,
+            self._warning_if(tx_gate_start < 0,
                 f'Tx warmup ({self._tx_warmup}) of RF block {tx_id} is less than delay ({self._tx_times[tx_id][0]})')
             out_dict['tx_gate'] = (np.array([tx_gate_start, self._tx_durations[tx_id]]),
                 np.array([1, 0]))
@@ -778,7 +795,7 @@ class PSInterpreter:
 # Sample usage
 if __name__ == '__main__':
     ps = PSInterpreter()
-    inp_file = '../ocra-pulseq/test_files/test_loopback.seq'
+    inp_file = '../ocra-pulseq/test_files/test4.seq'
     out_data, params = ps.interpret(inp_file)
-    print(out_data)
+    print(out_data['tx0'])
     print("Completed successfully")
