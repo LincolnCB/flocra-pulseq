@@ -20,7 +20,7 @@ class PSInterpreter:
 
     def __init__(self, rf_center=3e+6, rf_amp_max=5e+3, grad_max=1e+7,
                  clk_t=1/122.88, tx_t=123/122.88, grad_t=1229/122.88,
-                 tx_warmup=500, tx_zero_end=True, grad_zero_end=False,
+                 tx_warmup=500, tx_zero_end=True, grad_zero_end=True,
                  log_file = 'ps_interpreter'):
         """
         Create PSInterpreter object for FLOCRA with system parameters.
@@ -34,7 +34,7 @@ class PSInterpreter:
             grad_t (float): Default 1229/122.88 -- Gradient raster period in us.
             tx_warmup (float): Default 500 -- Warmup time to turn on tx_gate before Tx events in us.
             tx_zero_end (bool): Default True -- Force zero at the end of RF shapes
-            grad_zero_end (bool): Default False -- Force zero at the end of Gradient/Trap shapes
+            grad_zero_end (bool): Default True -- Force zero at the end of Gradient/Trap shapes
             log_file (str): Default 'ps_interpreter' -- File (.log appended) to write run log into.
         """
         # Logging
