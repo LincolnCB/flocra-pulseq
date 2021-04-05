@@ -20,7 +20,8 @@ class PSInterpreter:
 
     def __init__(self, rf_center=3e+6, rf_amp_max=5e+3, grad_max=1e+7,
                  clk_t=1/122.88, tx_t=123/122.88, grad_t=1229/122.88,
-                 tx_warmup=500, log_file = 'ps_interpreter'):
+                 tx_warmup=500, tx_zero_end=True, grad_zero_end=False,
+                 log_file = 'ps_interpreter'):
         """
         Create PSInterpreter object for FLOCRA with system parameters.
 
@@ -32,6 +33,8 @@ class PSInterpreter:
             tx_t (float): Default 123/122.88 -- Transmit raster period in us.
             grad_t (float): Default 1229/122.88 -- Gradient raster period in us.
             tx_warmup (float): Default 500 -- Warmup time to turn on tx_gate before Tx events in us.
+            tx_zero_end (bool): Default True -- Force zero at the end of RF shapes
+            grad_zero_end (bool): Default False -- Force zero at the end of Gradient/Trap shapes
             log_file (str): Default 'ps_interpreter' -- File (.log appended) to write run log into.
         """
         # Logging
@@ -52,6 +55,9 @@ class PSInterpreter:
         self._rf_amp_max = rf_amp_max # Hz
         self._grad_max = grad_max # Hz/m
         self._tx_warmup = tx_warmup # us
+        
+        self._tx_zero_end = tx_zero_end
+        self._grad_zero_end = grad_zero_end
 
         # Interpreter for section names in .seq file
         self._pulseq_keys = {
@@ -239,6 +245,11 @@ class PSInterpreter:
             self._error_if(np.any(np.abs(tx_env) > 1.0), f'Magnitude of RF event {tx_id} is too ' \
                 f'large relative to RF max {self._rf_amp_max}')
 
+            # Optionally force zero at the end of tx event
+            if self._tx_zero_end:
+                x = np.append(x, event_duration)
+                tx_env = np.append(tx_env, 0)
+
             # Save tx duration, update times, data
             self._tx_durations[tx_id] = event_duration + tx_event['delay']
             self._tx_times[tx_id] = x + tx_event['delay']
@@ -297,6 +308,11 @@ class PSInterpreter:
             self._error_if(np.any(np.abs(grad) > 1.0), f'Magnitude of gradient event {grad_id} is too ' \
                 f'large relative to gradient max {self._grad_max}')
 
+            # Optionally force zero at the end of gradient event
+            if self._grad_zero_end:
+                x = np.append(x, event_duration)
+                grad = np.append(grad, 0)
+
             # Save grad duration, update times, data
             self._grad_durations[grad_id] = event_duration + grad_event['delay']
             self._grad_times[grad_id] = x + grad_event['delay']
@@ -327,10 +343,6 @@ class PSInterpreter:
             for var in self._var_names:
                 times[var].append(var_dict[var][0] + start)
                 updates[var].append(var_dict[var][1])
-            
-            # Zero tx
-            times['tx0'].append(times['tx0'][-1][-1:] + self._tx_t)
-            updates['tx0'].append(np.zeros(1))
 
             start += duration
             readout_total += readout_num
@@ -342,7 +354,7 @@ class PSInterpreter:
 
         # Clean up final arrays
         for var in self._var_names:
-            # Make sure times are ordered, and overwrite duplicates to latest update
+            # Make sure times are ordered, and overwrite duplicates to last inserted update
             time_sorted, unique_idx = np.unique(np.flip(np.concatenate(times[var])), return_index=True)
             update_sorted = np.flip(np.concatenate(updates[var]))[unique_idx]
 
@@ -368,7 +380,7 @@ class PSInterpreter:
             float: duration of the block
             int: readout count for the block
         """
-        out_dict = {}
+        out_dict = {var: [] for var in self._var_names}
         readout_num = 0
         duration = 0
 
@@ -387,11 +399,10 @@ class PSInterpreter:
             out_dict['tx0'] = (self._tx_times[tx_id], self._tx_data[tx_id])
             duration = max(duration, self._tx_durations[tx_id])
             tx_gate_start = self._tx_times[tx_id][0] - self._tx_warmup
-            self._warning_if(tx_gate_start < 0,
-                f'Tx warmup ({self._tx_warmup}) of RF block {tx_id} is less than delay ({self._tx_times[tx_id][0]})')
+            self._error_if(tx_gate_start < 0,
+                f'Tx warmup ({self._tx_warmup}) of RF event {tx_id} is longer than delay ({self._tx_times[tx_id][0]})')
             out_dict['tx_gate'] = (np.array([tx_gate_start, self._tx_durations[tx_id]]),
                 np.array([1, 0]))
-
 
         # Gradient updates
         for grad_ch in ('gx', 'gy', 'gz'):
@@ -798,4 +809,5 @@ if __name__ == '__main__':
     inp_file = '../ocra-pulseq/test_files/test4.seq'
     out_data, params = ps.interpret(inp_file)
     print(out_data['tx0'])
+    print(out_data['tx_gate'])
     print("Completed successfully")

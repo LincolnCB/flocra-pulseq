@@ -19,6 +19,10 @@ grad_t (float): Default 1229/122.88 -- Gradient raster period in us. Will be ove
 
 tx_warmup (float): Default 500 -- Warmup time to turn on tx_gate before Tx events in us. Will be overwritten if the PulSeq file includes a "tx_warmup" in the definitions.
 
+tx_zero_end (bool): Default True -- Force zero at the end of RF shapes
+
+grad_zero_end (bool): Default True -- Force zero at the end of Gradient/Trap shapes
+
 log_file (str): Default 'ps_interpreter' -- File (.log appended) to write run log into
 
 # Outputs
