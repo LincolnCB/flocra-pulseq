@@ -11,6 +11,12 @@ rf_amp_max (float): Default 5e+3 -- System RF amplitude max in Hz.
 
 grad_max (float): Default 1e+6 -- System gradient max in Hz/m.
 
+gx_max (float): Default None -- System X-gradient max in Hz/m. If None, defaults to grad_max.
+
+gy_max (float): Default None -- System Y-gradient max in Hz/m. If None, defaults to grad_max.
+
+gz_max (float): Default None -- System Z-gradient max in Hz/m. If None, defaults to grad_max.
+
 clk_t (float): Default 1/122.88 -- System clock period in us.
 
 tx_t (float): Default 123/122.88 -- Transmit raster period in us. Will be overwritten if the PulSeq file includes a "tx_t" in the definitions.

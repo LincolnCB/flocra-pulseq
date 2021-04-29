@@ -19,6 +19,7 @@ class PSInterpreter:
     """
 
     def __init__(self, rf_center=3e+6, rf_amp_max=5e+3, grad_max=1e+7,
+                 gx_max=None, gy_max=None, gz_max=None,
                  clk_t=1/122.88, tx_t=123/122.88, grad_t=1229/122.88,
                  tx_warmup=500, tx_zero_end=True, grad_zero_end=True,
                  log_file = 'ps_interpreter'):
@@ -29,6 +30,9 @@ class PSInterpreter:
             rf_center (float): RF center (local oscillator frequency) in Hz.
             rf_amp_max (float): Default 5e+3 -- System RF amplitude max in Hz.
             grad_max (float): Default 1e+6 -- System gradient max in Hz/m.
+            gx_max (float): Default None -- System X-gradient max in Hz/m. If None, defaults to grad_max.
+            gy_max (float): Default None -- System Y-gradient max in Hz/m. If None, defaults to grad_max.
+            gz_max (float): Default None -- System Z-gradient max in Hz/m. If None, defaults to grad_max.
             clk_t (float): Default 1/122.88 -- System clock period in us.
             tx_t (float): Default 123/122.88 -- Transmit raster period in us.
             grad_t (float): Default 1229/122.88 -- Gradient raster period in us.
@@ -53,7 +57,17 @@ class PSInterpreter:
 
         self._rf_center = rf_center # Hz
         self._rf_amp_max = rf_amp_max # Hz
-        self._grad_max = grad_max # Hz/m
+        
+
+        # Gradient maxes, Hz/m
+        self._grad_max = {}
+        if gx_max is None: self._grad_max['gx'] = grad_max
+        else: self._grad_max['gx'] = gx_max
+        if gx_max is None: self._grad_max['gy'] = grad_max
+        else: self._grad_max['gy'] = gy_max
+        if gx_max is None: self._grad_max['gz'] = grad_max
+        else: self._grad_max['gz'] = gz_max    
+
         self._tx_warmup = tx_warmup # us
         
         self._tx_zero_end = tx_zero_end
@@ -112,7 +126,8 @@ class PSInterpreter:
         self._logger.info(f'Interpreting ' + pulseq_file)
         if self.is_assembled:
             self._logger.info('Re-initializing over old sequence...')
-            self.__init__(rf_center=self._rf_center, rf_amp_max=self._rf_amp_max, grad_max=self._grad_max,
+            self.__init__(rf_center=self._rf_center, rf_amp_max=self._rf_amp_max, 
+                gx_max=self._grad_max['gx'], gy_max=self._grad_max['gy'], gz_max=self._grad_max['gz'],
                 clk_t=self._clk_t, tx_t=self._tx_t, grad_t=self._grad_t)
         self._read_pulseq(pulseq_file)
         self._compile_tx_data()
@@ -293,7 +308,7 @@ class PSInterpreter:
 
                 # Concatenate times and data
                 x = np.concatenate((x_rise, x_fall))
-                grad = np.concatenate((rise, fall)) / self._grad_max
+                grad = np.concatenate((rise, fall))
 
                 event_duration = grad_event['rise'] + grad_event['flat'] + grad_event['fall'] # us
             else:
@@ -302,11 +317,8 @@ class PSInterpreter:
                 event_len = len(shape) # unitless
                 event_duration = event_len * self._grad_t # us
                 self._error_if(event_len < 1, f"Zero length shape: {grad_event['shape_id']}")
-                grad = shape * grad_event['amp'] / self._grad_max
+                grad = shape * grad_event['amp']
                 x = np.linspace(0, event_duration, num = event_len, endpoint=False)
-
-            self._error_if(np.any(np.abs(grad) > 1.0), f'Magnitude of gradient event {grad_id} is too ' \
-                f'large relative to gradient max {self._grad_max}')
 
             # Optionally force zero at the end of gradient event
             if self._grad_zero_end:
@@ -409,7 +421,9 @@ class PSInterpreter:
             grad_id = block[grad_ch]
             if grad_id != 0:
                 grad_var_name = grad_ch[0] + 'rad_v' + grad_ch[1] # To get the correct varname for output g[CH] -> grad_v[CH]
-                out_dict[grad_var_name] = (self._grad_times[grad_id], self._grad_data[grad_id])
+                self._error_if(np.any(np.abs(self._grad_data[grad_id] / self._grad_max[grad_ch]) > 1), 
+                    f'Gradient event {grad_id} for {grad_ch} in block {block_id} is larger than {grad_ch} max')
+                out_dict[grad_var_name] = (self._grad_times[grad_id], self._grad_data[grad_id] / self._grad_max[grad_ch])
                 duration = max(duration, self._grad_durations[grad_id])
 
         # Rx updates
