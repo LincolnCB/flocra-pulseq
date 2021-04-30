@@ -819,9 +819,20 @@ class PSInterpreter:
 
 # Sample usage
 if __name__ == '__main__':
-    ps = PSInterpreter()
-    inp_file = '../ocra-pulseq/test_files/test4.seq'
+    ps = PSInterpreter(grad_t=1)
+    inp_file = '../mgh-flocra/test_sequences/tabletop_radial_v2_2d_pulseq.seq'
     out_data, params = ps.interpret(inp_file)
-    print(out_data['tx0'])
-    print(out_data['tx_gate'])
+
+    import matplotlib.pyplot as plt
+
+    names = [' tx', ' gx', ' gy', ' gz', 'adc']
+    data = [out_data['tx0'], out_data['grad_vx'], out_data['grad_vy'], out_data['grad_vz'], out_data['tx_gate']]
+
+    for i in range(5):
+        print(f'{names[i]} minimum entry difference magnitude: {np.min(np.abs(data[i][1][1:] - data[i][1][:-1]))}')
+        print(f'{names[i]} entries below 1e-6 difference: {np.sum(np.abs(data[i][1][1:] - data[i][1][:-1]) < 1e-6)}')
+        print(f'{names[i]} entries below 1e-5 difference: {np.sum(np.abs(data[i][1][1:] - data[i][1][:-1]) < 1e-5)}')
+        print(f'{names[i]} entries below 1e-4 difference: {np.sum(np.abs(data[i][1][1:] - data[i][1][:-1]) < 1e-4)}')
+        print(f'{names[i]} entries below 1e-3 difference: {np.sum(np.abs(data[i][1][1:] - data[i][1][:-1]) < 1e-3)}')
+    
     print("Completed successfully")
