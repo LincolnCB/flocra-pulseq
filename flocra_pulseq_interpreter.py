@@ -287,7 +287,7 @@ class PSInterpreter:
 
                 # Check for timing issues
                 for time in ['rise', 'flat', 'fall']:
-                    self._error_if(grad_event[time] < self._grad_t, f'Trapezoid {grad_id} has {time} ' \
+                    self._warning_if(grad_event[time] < self._grad_t, f'Trapezoid {grad_id} has {time} ' \
                         f"time ({grad_event[time]}) less than raster time ({self._grad_t})")
                     self._warning_if(int(grad_event[time] / self._grad_t) * self._grad_t != grad_event[time],
                         f"Trapezoid {grad_id} {time} time ({grad_event[time]}) isn't a multiple of raster time ({self._grad_t})")
