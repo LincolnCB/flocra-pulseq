@@ -342,10 +342,10 @@ class PSInterpreter:
             dict: tuples of np.ndarray times, updates with variable name keys
             int: number of sequence readout points
         """
-        # Prep containers
+        # Prep containers, zero at start
         out_data = {}
-        times = {var: [] for var in self._var_names}
-        updates = {var: [] for var in self._var_names}
+        times = {var: [0] for var in self._var_names}
+        updates = {var: [0] for var in self._var_names}
         start = 0
         readout_total = 0
 
