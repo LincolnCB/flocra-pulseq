@@ -344,8 +344,8 @@ class PSInterpreter:
         """
         # Prep containers, zero at start
         out_data = {}
-        times = {var: [0] for var in self._var_names}
-        updates = {var: [0] for var in self._var_names}
+        times = {var: [np.zeros(1)] for var in self._var_names}
+        updates = {var: [np.zeros(1)] for var in self._var_names}
         start = 0
         readout_total = 0
 
