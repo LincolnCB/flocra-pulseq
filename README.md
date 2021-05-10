@@ -31,6 +31,8 @@ grad_zero_end (bool): Default True -- Force zero at the end of Gradient/Trap sha
 
 log_file (str): Default 'ps_interpreter' -- File (.log appended) to write run log into
 
+log_level (int): Default 20 (INFO) -- Logger level, 0 for all, 20 to ignore debug.
+
 # Outputs
 dict: tuple of numpy.ndarray time and update arrays, with variable name keys
 

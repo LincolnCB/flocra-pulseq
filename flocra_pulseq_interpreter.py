@@ -22,7 +22,7 @@ class PSInterpreter:
                  gx_max=None, gy_max=None, gz_max=None,
                  clk_t=1/122.88, tx_t=123/122.88, grad_t=1229/122.88,
                  tx_warmup=500, tx_zero_end=True, grad_zero_end=True,
-                 log_file = 'ps_interpreter'):
+                 log_file = 'ps_interpreter', log_level = 20):
         """
         Create PSInterpreter object for FLOCRA with system parameters.
 
@@ -40,9 +40,11 @@ class PSInterpreter:
             tx_zero_end (bool): Default True -- Force zero at the end of RF shapes
             grad_zero_end (bool): Default True -- Force zero at the end of Gradient/Trap shapes
             log_file (str): Default 'ps_interpreter' -- File (.log appended) to write run log into.
+            log_level (int): Default 20 (INFO) -- Logger level, 0 for all, 20 to ignore debug.
         """
         # Logging
         self._logger = logging.getLogger()
+        self._logger.setLevel(log_level)
         logging.basicConfig(filename = log_file + '.log', filemode = 'w', level = logging.DEBUG)
 
         self._clk_t = clk_t # Instruction clock period in us
