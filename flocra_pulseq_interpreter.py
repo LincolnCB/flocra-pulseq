@@ -44,8 +44,7 @@ class PSInterpreter:
         """
         # Logging
         self._logger = logging.getLogger()
-        self._logger.setLevel(log_level)
-        logging.basicConfig(filename = log_file + '.log', filemode = 'w', level = logging.DEBUG)
+        logging.basicConfig(filename = log_file + '.log', filemode = 'w', level = log_level)
 
         self._clk_t = clk_t # Instruction clock period in us
         self._tx_t = tx_t # Transmit sample period in us
