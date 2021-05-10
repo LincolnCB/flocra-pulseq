@@ -360,11 +360,6 @@ class PSInterpreter:
             start += duration
             readout_total += readout_num
 
-        # Zero gates at the end
-        for var in self._var_names:
-            times[var].append(np.zeros(1) + start)
-            updates[var].append(np.zeros(1))
-
         # Clean up final arrays
         for var in self._var_names:
             # Make sure times are ordered, and overwrite duplicates to last inserted update
@@ -375,6 +370,10 @@ class PSInterpreter:
             update_compressed_idx = np.concatenate([[0], np.nonzero(update_sorted[1:] - update_sorted[:-1])[0] + 1])
             update_arr = update_sorted[update_compressed_idx]
             time_arr = time_sorted[update_compressed_idx]
+
+            # Zero everything at end
+            time_arr = np.concatenate((time_arr, np.zeros(1) + start))
+            update_arr = np.concatenate((update_arr, np.zeros(1)))
 
             out_data[var] = (time_arr, update_arr)
 
