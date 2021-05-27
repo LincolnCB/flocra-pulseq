@@ -2,7 +2,11 @@
 Pulseq interpreter for vnegnev's flow-based OCRA (FLOCRA)
 
 # Usage:
-Create interpreter with PSInterpreter. Run PSInterpreter.interpret to get output array and dictionary. Errors, warning, and progress logged.
+TO INSTALL: In the root folder of this repository (Default `flocra-pulseq`), run `pip install -e .`. This will install the package with an editable link. If you need to move the file structure, run `pip uninstall flocra_pulseq`, and reinstall once your files are where you want them.
+
+To import the package: `import flocra_pulseq.interpreter`
+
+Create interpreter with `flocra_pulseq.interpreter.PSInterpreter`. Run `PSInterpreter.interpret()` to get output array and dictionary. Specify a log path to log errors, warnings, and progress.
 
 # Arguments
 rf_center (float): RF center (local oscillator frequency) in Hz.

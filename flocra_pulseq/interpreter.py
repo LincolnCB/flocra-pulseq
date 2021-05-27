@@ -2,11 +2,8 @@
 # pulseq_assembler.py
 # Written by Lincoln Craven-Brightman
 
-import pdb # Debugging
 import numpy as np
 import logging # For errors
-import struct
-import io
 
 class PSInterpreter:
     """
