@@ -86,7 +86,8 @@ class PSInterpreter:
         }
 
         # Defined variable names to output
-        self._var_names = ('tx0', 'grad_vx', 'grad_vy', 'grad_vz', 'rx0_en', 'tx_gate')
+        self._var_names = ('tx0', 'grad_vx', 'grad_vy', 'grad_vz', 'grad_vz2',
+         'rx0_en', 'tx_gate')
 
         # PulSeq dictionary storage
         self._blocks = {}
